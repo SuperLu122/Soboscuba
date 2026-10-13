@@ -14,7 +14,8 @@
   var FONT = "'Lilita One', 'Arial Rounded MT Bold', 'Trebuchet MS', system-ui, sans-serif";
   var MAX_PULL = 140;      // world px of drag for a full-power shot
   var MAX_SPEED = 1500;    // px/s at full power
-  var DANGER_TIME = 3;     // seconds a blob may sit over the line
+  var DANGER_TIME = 2;     // seconds a pressure pad may stay overloaded
+  var PAD_LIMIT = 12;      // smoothed pad pressure that counts as overloaded
   var COOLDOWN = 0.45;
   var DEAD_ZONE = 5;       // world px of drag treated as a tap
 
@@ -76,6 +77,7 @@
     cur: 2, next: 4,
     readyT: 0,
     dangerT: 0, warnT: 0,
+    pad: [0, 0],            // smoothed pressure on the left and right pads
     shake: 0,
     time: 0,
     saveT: 0,
@@ -100,7 +102,7 @@
     { id: 'combo5', name: 'Cascade', desc: 'Get a combo of x5.' },
     { id: 'bullseye', name: 'Bullseye', desc: 'Merge a blob with the first blob it touches.' },
     { id: 'bank', name: 'Bank shot', desc: 'Bounce a blob off a wall straight into a merge.' },
-    { id: 'close', name: 'Close call', desc: 'Clear the line with under half a second to spare.' },
+    { id: 'close', name: 'Close call', desc: 'Take the weight off the pressure pads with under half a second to spare.' },
     { id: 's10k', name: 'Five figures', desc: 'Score 10,000 in one game.' },
     { id: 's25k', name: 'Deep diver', desc: 'Score 25,000 in one game.' },
     { id: 's100k', name: 'Abyssal', desc: 'Score 100,000 in one game.' }
@@ -184,7 +186,7 @@
     bgGrad.addColorStop(1, '#03111f');
     document.documentElement.style.setProperty('--tank-w', (CFG.W * sc) + 'px');
     // Toasts sit just under the danger line, clear of the launcher and HUD.
-    document.documentElement.style.setProperty('--toast-top', (view.oy + (CFG.dangerY + 14) * sc) + 'px');
+    document.documentElement.style.setProperty('--toast-top', (view.oy + (CFG.padBot + 14) * sc) + 'px');
   }
   window.addEventListener('resize', resize);
   window.addEventListener('orientationchange', function () { setTimeout(resize, 200); });
@@ -199,7 +201,7 @@
     fx.length = 0; popups.length = 0;
     S.score = 0; S.biggest = 2; S.combo = 0; S.comboT = 0;
     S.cur = rollValue(); S.next = rollValue();
-    S.readyT = 0.2; S.dangerT = 0; S.dangerPeak = 0; S.newBest = false; S.overT = 0;
+    S.readyT = 0.2; S.dangerT = 0; S.dangerPeak = 0; S.pad = [0, 0]; S.newBest = false; S.overT = 0;
     S.tutorial = !store.get('tutorialDone', false);
     setMode('play');
     save();
@@ -309,19 +311,26 @@
     }
   }
 
+  /* The pile loses when it squeezes the pressure pads on the side walls too
+   * hard for too long. Pressure is smoothed so the brief spike from a hard
+   * shot doesn't count. A blob jammed up into the launcher counts too. */
   function checkDanger(dt) {
-    var over = false;
+    var jam = 0;
     for (var i = 0; i < world.blobs.length; i++) {
       var b = world.blobs[i];
-      if (b.age > 1.5 && b.growT >= 1 && b.cy - b.R < CFG.dangerY) { over = true; break; }
+      if (b.age > 1.5 && b.growT >= 1 && b.cy - b.curR < CFG.launchY) { jam = PAD_LIMIT * 1.5; break; }
     }
+    var k = Math.min(1, dt / 0.35);
+    S.pad[0] += (world.padL + jam - S.pad[0]) * k;
+    S.pad[1] += (world.padR + jam - S.pad[1]) * k;
+    var over = Math.max(S.pad[0], S.pad[1]) > PAD_LIMIT;
     if (over) {
       S.dangerT += dt;
       S.warnT -= dt;
-      if (S.warnT <= 0) { Audio.warn(); haptic(1); S.warnT = Math.max(0.18, 0.6 - S.dangerT * 0.15); }
+      if (S.warnT <= 0) { Audio.warn(); haptic(1); S.warnT = Math.max(0.18, 0.6 - S.dangerT * 0.2); }
       if (S.dangerT >= DANGER_TIME) gameOver();
     } else {
-      S.dangerT = Math.max(0, S.dangerT - dt * 2);
+      S.dangerT = Math.max(0, S.dangerT - dt);
       S.warnT = 0;
       if (S.dangerT === 0) {
         if (S.dangerPeak >= DANGER_TIME - 0.5) unlock('close');
@@ -362,7 +371,7 @@
       b.age = 2;
     });
     S.score = s.score; S.biggest = s.biggest; S.cur = s.cur; S.next = s.next;
-    S.combo = 0; S.comboT = 0; S.readyT = 0.3; S.dangerT = 0; S.newBest = false;
+    S.combo = 0; S.comboT = 0; S.readyT = 0.3; S.dangerT = 0; S.pad = [0, 0]; S.newBest = false;
     setMode('play');
     return true;
   }
@@ -617,9 +626,10 @@
     ctx.setTransform(s, 0, 0, s, (view.ox + sx) * dpr, (view.oy + sy) * dpr);
 
     drawTank();
-    drawDangerLine();
+    drawPads();
     for (var i = 0; i < world.blobs.length; i++) drawBlob(world.blobs[i]);
     drawFx();
+    drawPressureWarning();
     if (S.mode === 'play' || S.mode === 'paused') drawLauncher();
     drawPopups();
     drawHud();
@@ -702,46 +712,68 @@
     ctx.stroke();
   }
 
-  function drawDangerLine() {
-    var y = CFG.dangerY, t = S.dangerT / DANGER_TIME;
+  /* Pressure pads: a button on each side wall that sinks in and heats up
+   * from teal to red as the pile squeezes it. */
+  function drawPads() {
+    var top = CFG.padTop, h = CFG.padBot - CFG.padTop, t = S.dangerT / DANGER_TIME;
     var alarm = t > 0 ? 0.5 + 0.5 * Math.sin(S.time * (10 + t * 14)) : 0;
-    if (t > 0) {
-      ctx.fillStyle = 'rgba(255,90,90,' + (0.06 + alarm * 0.12 * (0.4 + t)) + ')';
-      ctx.fillRect(CFG.wallL, CFG.ceil, CFG.wallR - CFG.wallL, y - CFG.ceil);
-    }
-    ctx.save();
-    ctx.setLineDash([10, 8]);
-    ctx.lineDashOffset = -S.time * 20;
-    ctx.lineWidth = 2.5;
-    ctx.strokeStyle = t > 0 ? 'rgba(255,110,110,' + (0.6 + alarm * 0.4) + ')' : 'rgba(230,250,255,0.35)';
-    ctx.beginPath();
-    ctx.moveTo(CFG.wallL + 4, y); ctx.lineTo(CFG.wallR - 4, y);
-    ctx.stroke();
-    ctx.restore();
-    if (t > 0) {
-      // Countdown ring at the right end of the line.
-      var cx = CFG.wallR - 26, cy = y - 22;
-      ctx.lineWidth = 5;
-      ctx.strokeStyle = 'rgba(255,255,255,0.18)';
-      ctx.beginPath(); ctx.arc(cx, cy, 13, 0, Math.PI * 2); ctx.stroke();
-      ctx.strokeStyle = '#ff6e6e';
-      ctx.beginPath(); ctx.arc(cx, cy, 13, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (1 - t)); ctx.stroke();
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillStyle = '#ffffff';
-      ctx.font = '13px ' + FONT;
-      ctx.fillText(Math.max(0, DANGER_TIME - S.dangerT).toFixed(1), cx, cy + 1);
-      if (S.dangerT > 0.4) {
-        var a = 0.65 + alarm * 0.35;
-        ctx.font = (20 + alarm * 2) + 'px ' + FONT;
-        ctx.textAlign = 'right';
-        ctx.lineWidth = 4;
-        ctx.strokeStyle = 'rgba(60,0,0,' + (0.6 * a) + ')';
-        ctx.fillStyle = 'rgba(255,120,120,' + a + ')';
-        ctx.strokeText('OVERFLOW!', cx - 22, cy + 1);
-        ctx.fillText('OVERFLOW!', cx - 22, cy + 1);
+    for (var side = 0; side < 2; side++) {
+      var load = Math.min(1.3, S.pad[side] / PAD_LIMIT);
+      var hot = Math.min(1, load);
+      var col = hot < 0.5 ? mix('#5fd3c6', '#ffd166', hot * 2) : mix('#ffd166', '#ff5d5d', (hot - 0.5) * 2);
+      var sink = Math.min(1, load) * 4;
+      var wall = side ? CFG.wallR : CFG.wallL;
+      // Housing set into the wall; the pad sinks outward into it when pressed.
+      var hx = side ? wall : wall - 13;
+      ctx.fillStyle = 'rgba(6,26,42,0.7)';
+      roundRect(hx, top - 5, 13, h + 10, 5);
+      ctx.fill();
+      if (load > 1) {
+        ctx.fillStyle = 'rgba(255,93,93,' + (0.2 + alarm * 0.35) + ')';
+        roundRect(hx - 5, top - 10, 23, h + 20, 9);
+        ctx.fill();
+      }
+      ctx.fillStyle = col;
+      roundRect(side ? wall + sink : wall - 9 - sink, top, 9, h, 4);
+      ctx.fill();
+      // Gauge: lit notches up the pad.
+      for (var n = 0; n < 6; n++) {
+        var lit = load * 6 > n + 0.2;
+        ctx.fillStyle = lit ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.18)';
+        var ny = top + h - 10 - n * (h - 14) / 5;
+        ctx.beginPath(); ctx.arc(side ? wall + sink + 4.5 : wall - 4.5 - sink, ny, 1.6, 0, Math.PI * 2); ctx.fill();
       }
     }
+  }
+
+  /* Countdown and warning, drawn over the blobs. */
+  function drawPressureWarning() {
+    var t = S.dangerT / DANGER_TIME;
+    if (t <= 0) return;
+    var alarm = 0.5 + 0.5 * Math.sin(S.time * (10 + t * 14));
+    // Countdown in the middle of the launch zone's lower edge.
+    var cx = CFG.W / 2, cy = CFG.dangerY - 6;
+    ctx.fillStyle = 'rgba(30,4,12,' + (0.6 + alarm * 0.15) + ')';
+    roundRect(cx - 154, cy - 21, 252, 42, 21);
+    ctx.fill();
+    ctx.lineWidth = 5;
+    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+    ctx.beginPath(); ctx.arc(cx + 70, cy, 13, 0, Math.PI * 2); ctx.stroke();
+    ctx.strokeStyle = '#ff6e6e';
+    ctx.beginPath(); ctx.arc(cx + 70, cy, 13, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (1 - t)); ctx.stroke();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '13px ' + FONT;
+    ctx.fillText(Math.max(0, DANGER_TIME - S.dangerT).toFixed(1), cx + 70, cy + 1);
+    var a = 0.65 + alarm * 0.35;
+    ctx.font = (19 + alarm * 2) + 'px ' + FONT;
+    ctx.textAlign = 'right';
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = 'rgba(60,0,0,' + (0.6 * a) + ')';
+    ctx.fillStyle = 'rgba(255,120,120,' + a + ')';
+    ctx.strokeText('TOO MUCH PRESSURE!', cx + 50, cy + 1);
+    ctx.fillText('TOO MUCH PRESSURE!', cx + 50, cy + 1);
   }
 
   function smoothPath(pts, n) {

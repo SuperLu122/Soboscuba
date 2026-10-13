@@ -20,15 +20,16 @@
   var CFG = SB.CONFIG = {
     W: 420, H: 760,
     wallL: 16, wallR: 404, floor: 736, ceil: 4,
-    dangerY: 176,
+    dangerY: 176,          // top of the play area (launch zone above)
+    padTop: 520, padBot: 720,   // pressure pads low on both side walls
     launchX: 210, launchY: 100,
     gravity: 1500,
     substeps: 8,
-    viscosity: 0.02,
-    reboundDamp: 0.12,
+    viscosity: 0.004,
+    reboundDamp: 0.03,
     spinDamp: 0.04,
     mergeSlop: 5,
-    shapeStiff: 0.01,     // pull toward the rest circle per substep (low = squishy)
+    shapeStiff: 0.008,    // pull toward the rest circle per substep (low = squishy)
     pressure: 0.6,        // how hard each blob keeps its volume
     smooth: 0.035,        // pulls each skin particle toward its neighbours' midpoint
     dt: 1 / 60
@@ -88,6 +89,9 @@
     this.contacts = [];   // [blobA, blobB] pairs with equal value touching
     this.contactKeys = {};
     this.impact = 0;      // strongest blob/blob impact this frame (for sfx)
+    this.padL = 0;        // how hard the pile pushes each side pad this frame
+    this.padR = 0;
+    this.wallPush = new Float32Array(Math.ceil(CFG.H / 40) * 2);   // per 40px band, L then R
   }
   SB.World = World;
 
@@ -183,6 +187,8 @@
     this.contacts.length = 0;
     this.contactKeys = {};
     this.impact = 0;
+    this.padL = 0; this.padR = 0;
+    this.wallPush.fill(0);
 
     for (i = 0; i < this.blobs.length; i++) {
       b = this.blobs[i];
@@ -494,10 +500,18 @@
     var L = CFG.wallL + PR, Rr = CFG.wallR - PR;
     var F = CFG.floor - PR, T = CFG.ceil + PR;
     var wf = 0.25, owner = this.owner, blobs = this.blobs;
+    var pt = CFG.padTop, pb = CFG.padBot, nb = this.wallPush.length / 2;
     for (var k = 0; k < this.count; k++) {
       var hit = 0;
-      if (X[k] < L) { X[k] = L; PY[k] += (Y[k] - PY[k]) * wf; hit = 1; }
-      else if (X[k] > Rr) { X[k] = Rr; PY[k] += (Y[k] - PY[k]) * wf; hit = 1; }
+      if (X[k] < L) {
+        if (Y[k] > pt && Y[k] < pb) this.padL += L - X[k];
+        if (Y[k] > 0) this.wallPush[(Y[k] / 40) | 0] += L - X[k];
+        X[k] = L; PY[k] += (Y[k] - PY[k]) * wf; hit = 1;
+      } else if (X[k] > Rr) {
+        if (Y[k] > pt && Y[k] < pb) this.padR += X[k] - Rr;
+        if (Y[k] > 0) this.wallPush[nb + ((Y[k] / 40) | 0)] += X[k] - Rr;
+        X[k] = Rr; PY[k] += (Y[k] - PY[k]) * wf; hit = 1;
+      }
       if (Y[k] > F) { Y[k] = F; PX[k] += (X[k] - PX[k]) * wf; hit = 2; }
       else if (Y[k] < T) { Y[k] = T; hit = 2; }
       if (hit) {
