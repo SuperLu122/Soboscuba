@@ -1,0 +1,26 @@
+{
+  "name": "soboscuba",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A squishy physics merge puzzle for iOS and PC, inspired by sobosuba.",
+  "scripts": {
+    "start": "node tools/serve.js",
+    "icons": "python3 tools/make_icons.py",
+    "build:single": "node tools/build-single.js",
+    "ios:add": "cap add ios",
+    "ios:sync": "cap sync ios",
+    "ios:open": "cap open ios",
+    "test": "node tests/run.js",
+    "test:node": "node tests/run.js node",
+    "test:e2e": "node tests/run.js e2e",
+    "styles": "python3 tools/gen-styles.py"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.5.3"
+  },
+  "dependencies": {
+    "@capacitor/core": "^8.5.3",
+    "@capacitor/haptics": "^8.0.2",
+    "@capacitor/ios": "^8.5.3"
+  }
+}

@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Soboscuba</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="description" content="Fling squishy numbered sobos, merge equal numbers, and keep the pile off the side bumpers.">
+  <meta name="theme-color" content="#000000">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Soboscuba">
+  <meta name="format-detection" content="telephone=no">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <canvas id="game" aria-label="Soboscuba game board"></canvas>
+  <div id="safe" aria-hidden="true"></div>
+
+  <section id="title" class="overlay" aria-labelledby="logo">
+    <div class="card card--title">
+      <h1 id="logo" class="logo" aria-label="Soboscuba">
+        <span style="--c:#ff2e2e">s</span><span style="--c:#ffe62e">o</span><span style="--c:#5cff2e">b</span><span style="--c:#2effbf">o</span><span style="--c:#2e8bff">s</span><span style="--c:#9b30ff">c</span><span style="--c:#ff34b4">u</span><span style="--c:#ff7433">b</span><span style="--c:#33ffff">a</span>
+      </h1>
+      <p class="tagline">Pick. Aim. Let go. Merge the sobos.</p>
+      <div class="actions">
+        <button id="btn-continue" class="btn btn--primary" type="button" hidden>Continue</button>
+        <button id="btn-play" class="btn btn--primary" type="button">Start game</button>
+      </div>
+      <button id="btn-awards" class="btn btn--small" type="button">Awards &amp; themes <span id="awards-count" class="pill">0/30</span></button>
+      <ul class="howto">
+        <li>Sobos float in from both sides and wait on the bar at the top.</li>
+        <li><b>Grab one and drag</b> the way you want it to fly. Let go to launch. Drag further for a harder shot.</li>
+        <li><b>Equal numbers merge</b>: 1 + 1 = 2, 2 + 2 = 4, and on up.</li>
+        <li>Mind the <b>bumpers</b> in the side walls. If the pile shoves both of them all the way out at once, the game is over.</li>
+      </ul>
+      <p class="best">Best score <span id="title-best">0</span></p>
+    </div>
+  </section>
+
+  <section id="pause" class="overlay" hidden aria-labelledby="pause-h">
+    <div class="card">
+      <h2 id="pause-h">Paused</h2>
+      <div class="actions actions--stack">
+        <button id="btn-resume" class="btn btn--primary" type="button">Resume</button>
+        <button id="btn-restart" class="btn" type="button">Restart</button>
+        <button id="btn-sound" class="btn" type="button">Sound: on</button>
+        <button id="btn-haptics" class="btn" type="button">Vibration: on</button>
+        <button id="btn-awards-pause" class="btn" type="button">Awards &amp; themes</button>
+        <button id="btn-home" class="btn btn--quiet" type="button">Save and quit to title</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="over" class="overlay" hidden aria-labelledby="over-h">
+    <div class="card">
+      <h2 id="over-h">Game over</h2>
+      <p id="over-newbest" class="newbest" hidden>New best score</p>
+      <dl class="stats">
+        <div><dt>Final score</dt><dd id="over-score">0</dd></div>
+        <div><dt>Best</dt><dd id="over-best">0</dd></div>
+        <div><dt>Biggest sobo</dt><dd id="over-biggest">2</dd></div>
+      </dl>
+      <div class="actions actions--stack">
+        <button id="btn-again" class="btn btn--primary" type="button">New game</button>
+        <button id="btn-view" class="btn" type="button">View board</button>
+        <button id="btn-over-home" class="btn btn--quiet" type="button">Title screen</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="awards" class="overlay overlay--top" hidden aria-labelledby="awards-h">
+    <div class="card card--awards">
+      <div class="awards-head">
+        <div>
+          <h2 id="awards-h">Achievements</h2>
+          <p id="awards-progress" class="best">0 of 30</p>
+        </div>
+        <button id="btn-awards-x" class="btn btn--icon" type="button" aria-label="Close">&times;</button>
+      </div>
+      <ul id="awards-list" class="awards"></ul>
+      <h3 class="subhead">Colour themes</h3>
+      <p id="styles-tokens" class="best styles-tokens">0 theme unlocks left</p>
+      <div id="styles-list" class="styles" role="radiogroup" aria-label="Colour theme"></div>
+      <button id="btn-awards-close" class="btn btn--primary" type="button">Done</button>
+    </div>
+  </section>
+
+  <div id="rotate" class="rotate" aria-live="polite">
+    <div class="rotate-phone" aria-hidden="true"></div>
+    <p>Turn your phone upright to play</p>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden>
+    <span class="toast-kicker">Achievement unlocked</span>
+    <b id="toast-name"></b>
+    <span id="toast-desc"></span>
+    <span id="toast-extra" class="toast-extra" hidden></span>
+  </div>
+
+  <script src="js/physics.js"></script>
+  <script src="js/mode.js"></script>
+  <script src="js/achievements.js"></script>
+  <script src="js/styles.js"></script>
+  <script src="js/render.js"></script>
+  <script src="js/audio.js"></script>
+  <script src="js/game.js"></script>
+  <script>
+    // Offline support when served over http(s). Opening index.html straight
+    // from disk and the native iOS wrapper both skip this.
+    if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
+      window.addEventListener('load', function () {
+        navigator.serviceWorker.register('sw.js').catch(function () {});
+      });
+    }
+  </script>
+</body>
+</html>

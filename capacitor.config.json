@@ -1,0 +1,11 @@
+{
+  "appId": "com.soboscuba.game",
+  "appName": "Soboscuba",
+  "webDir": "www",
+  "backgroundColor": "#000000",
+  "ios": {
+    "contentInset": "never",
+    "scrollEnabled": false,
+    "backgroundColor": "#000000"
+  }
+}
