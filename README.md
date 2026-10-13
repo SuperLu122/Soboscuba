@@ -2,7 +2,7 @@
 
 A recreation of [sobosuba](https://store.steampowered.com/app/1946560/sobosuba/) for mobile: a squishy physics merge puzzle that runs on **iPhone/iPad** and **PC** (Windows, macOS, Linux).
 
-Pull back to fling soft-body numbered blobs into an underwater tank. Two equal blobs that touch merge into the next number (2 + 2 = 4 … up to 16k and beyond). Keep the pile below the dashed line. If any blob stays over it for 3 seconds, the tank is full and the game ends.
+Pull back to fling squishy numbered sobos into an underwater tank. Two equal blobs that touch merge into the next number (2 + 2 = 4 … up to 16k and beyond). Keep the pile below the dashed line. If any blob stays over it for 3 seconds, the tank is full and the game ends.
 
 ## How to play
 
@@ -19,6 +19,24 @@ Pull back to fling soft-body numbered blobs into an underwater tank. Two equal b
 - Your game saves automatically. Leave and come back, and **Continue** picks up where you left off. Your best score is kept too.
 - The first game shows a short animated tutorial.
 - On a phone, play upright. Turning it sideways pauses the game until you turn it back.
+
+## The sobos
+
+Every blob is a little character with a face that reacts to what is going on:
+
+| What's happening | Face |
+|---|---|
+| You line up a shot | Everyone in the tank turns to watch. The sobo in the launcher frowns with determination as you pull back further |
+| Flying through the water | Wide eyes and an "o" mouth |
+| Hit hard or landed on | Scrunched-up `> <` eyes and a wobbly mouth |
+| Squashed flat under a pile | Same scrunched face, until the weight comes off |
+| A matching sobo is close by | It gazes at its partner with an eager little grin, which is also a handy hint |
+| Just merged | Beams with happy `^ ^` eyes |
+| Over the dashed line while the timer runs | Looks up nervously, with worried brows and a sweat drop |
+| Left alone for a while | Dozes off, with a drifting `z` |
+| The tank is full | Everyone looks sad |
+
+They also blink, glance around, and their faces squash and stretch along with their bodies.
 
 ## Achievements and blob styles
 
@@ -103,17 +121,22 @@ capacitor.config.json native iOS wrapper settings
 Like the original, each blob is a closed ring of small circular particles rather than one rigid circle. That is what makes the pile squish and wobble. Each frame runs 8 substeps:
 
 1. **Verlet integration** moves every particle under gravity with light damping.
-2. **Shape matching** finds the best-fit rotation of each blob's rest circle and pulls the particles toward it. Bigger blobs are slightly softer, so they jiggle more.
+2. **A soft body** holds each ring together with three gentle forces:
+   - **Shape matching** pulls weakly toward the blob's best-fit rest circle, so it slowly recovers its shape.
+   - **Pressure** keeps the enclosed area constant, so a squashed blob bulges sideways instead of shrinking.
+   - **Smoothing** keeps the outline free of lumps.
+
+   The result is mochi-like: blobs sag into flat-bottomed shapes and mould into the gaps around them. Bigger blobs are softer.
 3. **Collisions** resolve particle-vs-particle contacts between different blobs (with friction) and particle-vs-wall contacts. A uniform spatial hash keeps this fast.
 
 A few extra rules make it feel like jelly rather than rubber:
 
 - **Contact damping.** While touching something, a blob's rebound and spin are damped, so shots land where they are aimed instead of bouncing and rolling away.
-- **Skin.** Neighbouring ring particles can't drift apart, so small blobs can't slip inside big ones.
+- **Skin.** Neighbouring ring particles can't drift too far apart, so small blobs can't slip through a ring into a big one.
 - **Merge tolerance.** Equal blobs wedged a hair apart still merge, because they look like they're touching.
 - **Peanut start.** Merged blobs start from their two parents' outline and inflate into a circle. A safety pass separates any ring that does end up inside another.
 
-A crowded tank (about 600 particles) simulates in roughly 1 ms per frame on a laptop.
+A crowded tank (about 600 particles) simulates in roughly 2 ms per frame on a laptop.
 
 ## Credits
 

@@ -28,10 +28,13 @@
     reboundDamp: 0.12,
     spinDamp: 0.04,
     mergeSlop: 5,
+    shapeStiff: 0.01,     // pull toward the rest circle per substep (low = squishy)
+    pressure: 0.6,        // how hard each blob keeps its volume
+    smooth: 0.035,        // pulls each skin particle toward its neighbours' midpoint
     dt: 1 / 60
   };
 
-  function radiusFor(level) { return 14 + 8.4 * (level - 1); }
+  function radiusFor(level) { return 17 + 8.2 * (level - 1); }
   SB.radiusFor = radiusFor;
   SB.PR = PR;
 
@@ -45,7 +48,7 @@
     this.growFrom = startR || this.R;
     this.curR = this.growFrom;
     this.growT = startR ? 0 : 1;
-    this.n = Math.max(8, Math.ceil(Math.PI * (this.R - PR) / (PR * 0.9)));
+    this.n = Math.max(9, Math.ceil(Math.PI * (this.R - PR) / (PR * 0.82)));
     this.off = -1;
     this.age = 0;
     this.angle = 0;
@@ -336,8 +339,9 @@
       b.angle = ang;
       var c = Math.cos(ang), sn = Math.sin(ang);
       var r = b.curR - PR;
-      // Bigger blobs are a little softer, so they wobble more.
-      var stiff = 0.16 - Math.min(0.07, b.level * 0.005);
+      // Low shape stiffness so blobs sag and squash like mochi. Bigger blobs
+      // are a little softer still. Volume is kept by the pressure pass below.
+      var stiff = CFG.shapeStiff * (1.15 - Math.min(0.45, b.level * 0.04));
       var dev = 0;
       for (i = 0; i < n; i++) {
         k = o + i;
@@ -351,9 +355,47 @@
       }
       b.squish = Math.min(1, dev / n / (r * 0.18 + 1));
 
+      // Smoothing (a bending term): keeps the outline round and free of
+      // lumps while the shape as a whole squashes. Shrinks area slightly,
+      // which the pressure pass restores.
+      var sm = CFG.smooth, px0 = X[o + n - 1], py0 = Y[o + n - 1], fx = X[o], fy = Y[o];
+      for (i = 0; i < n; i++) {
+        k = o + i;
+        var nxp = i === n - 1 ? fx : X[k + 1], nyp = i === n - 1 ? fy : Y[k + 1];
+        var curx = X[k], cury = Y[k];
+        X[k] += ((px0 + nxp) * 0.5 - curx) * sm;
+        Y[k] += ((py0 + nyp) * 0.5 - cury) * sm;
+        px0 = curx; py0 = cury;
+      }
+
+      // Pressure: keep the ring's enclosed area at its rest area, pushing
+      // each particle along its outward normal (position-based area
+      // constraint). This is what lets a squashed blob bulge sideways.
+      var area = 0;
+      for (i = 0; i < n; i++) {
+        var p1 = o + i, p2 = o + (i + 1) % n;
+        area += X[p1] * Y[p2] - X[p2] * Y[p1];
+      }
+      area *= 0.5;
+      var rest = 0.5 * n * r * r * Math.sin(2 * Math.PI / n);
+      var gsum = 0, gxs = this._gx, gys = this._gy;
+      if (!gxs || gxs.length < n) { gxs = this._gx = new Float32Array(512); gys = this._gy = new Float32Array(512); }
+      for (i = 0; i < n; i++) {
+        var pn = o + (i + 1) % n, pp = o + (i + n - 1) % n;
+        gxs[i] = 0.5 * (Y[pn] - Y[pp]);
+        gys[i] = 0.5 * (X[pp] - X[pn]);
+        gsum += gxs[i] * gxs[i] + gys[i] * gys[i];
+      }
+      if (gsum > 1e-6) {
+        var lam = (rest - area) / gsum * CFG.pressure;
+        for (i = 0; i < n; i++) { X[o + i] += gxs[i] * lam; Y[o + i] += gys[i] * lam; }
+      }
+
       // Skin: adjacent ring particles may not drift apart far enough to let
       // another blob's particle slip between them.
-      var maxSep = PD * 0.96;
+      // (A gap of up to 1.25 particle diameters still leaves the midpoint
+      // closer than one diameter to both neighbours, so nothing fits through.)
+      var maxSep = PD * 1.25;
       for (i = 0; i < n; i++) {
         var a1 = o + i, a2 = o + (i + 1) % n;
         var sx = X[a2] - X[a1], sy = Y[a2] - Y[a1];
