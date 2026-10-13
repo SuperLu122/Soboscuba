@@ -1,16 +1,22 @@
 /* Offline cache for the installed (home screen / desktop) app.
  * Bump VERSION whenever any cached file changes. */
-var VERSION = 'soboscuba-v7';
+var VERSION = 'soboscuba-v8';
 var FILES = [
   './',
   'index.html',
   'css/style.css',
   'js/physics.js',
+  'js/mode.js',
+  'js/achievements.js',
+  'js/styles.js',
+  'js/render.js',
   'js/audio.js',
   'js/game.js',
   'manifest.webmanifest',
   'fonts/audiowide-latin.woff2',
   'fonts/nunito-latin.woff2',
+  'fonts/souba_score.ttf',
+  'fonts/souba_text.otf',
   'icons/icon-192.png',
   'icons/icon-512.png',
   'icons/apple-touch-icon.png'

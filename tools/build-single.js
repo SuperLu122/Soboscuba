@@ -14,11 +14,14 @@ const fragment = args.includes('--fragment');
 const out = args.find(a => !a.startsWith('--')) || path.join(__dirname, '..', 'dist', 'soboscuba.html');
 const read = f => fs.readFileSync(path.join(WWW, f), 'utf8');
 
+const MIME = { woff2: 'font/woff2', ttf: 'font/ttf', otf: 'font/otf' };
 let css = read('css/style.css').replace(/url\('\.\.\/fonts\/([^']+)'\)/g, (_, f) =>
-  `url(data:font/woff2;base64,${fs.readFileSync(path.join(WWW, 'fonts', f)).toString('base64')})`);
+  `url(data:${MIME[path.extname(f).slice(1)]};base64,${fs.readFileSync(path.join(WWW, 'fonts', f)).toString('base64')})`);
 const html = read('index.html');
-const body = html.slice(html.indexOf('<body>') + 6, html.indexOf('<script src="js/physics.js">'));
-const js = ['js/physics.js', 'js/audio.js', 'js/game.js'].map(read).join('\n');
+// The game scripts are whatever index.html loads from js/, in its order.
+const firstScript = html.indexOf('<script src="js/');
+const body = html.slice(html.indexOf('<body>') + 6, firstScript);
+const js = [...html.matchAll(/<script src="(js\/[^"]+)"><\/script>/g)].map(m => read(m[1])).join('\n');
 
 const head = `<title>Soboscuba</title>
 <style>
