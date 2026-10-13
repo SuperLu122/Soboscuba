@@ -20,24 +20,6 @@ Pull back to fling squishy numbered sobos into an underwater tank. Two equal blo
 - The first game shows a short animated tutorial.
 - On a phone, play upright. Turning it sideways pauses the game until you turn it back.
 
-## The sobos
-
-Every blob is a little character with a face that reacts to what is going on:
-
-| What's happening | Face |
-|---|---|
-| You line up a shot | Everyone in the tank turns to watch. The sobo in the launcher frowns with determination as you pull back further |
-| Flying through the water | Wide eyes and an "o" mouth |
-| Hit hard or landed on | Scrunched-up `> <` eyes and a wobbly mouth |
-| Squashed flat under a pile | Same scrunched face, until the weight comes off |
-| A matching sobo is close by | It gazes at its partner with an eager little grin, which is also a handy hint |
-| Just merged | Beams with happy `^ ^` eyes |
-| Over the dashed line while the timer runs | Looks up nervously, with worried brows and a sweat drop |
-| Left alone for a while | Dozes off, with a drifting `z` |
-| The tank is full | Everyone looks sad |
-
-They also blink, glance around, and their faces squash and stretch along with their bodies.
-
 ## Achievements and blob styles
 
 Thirteen achievements, shown in a pop-up as you earn them. Four of them unlock new colour styles for the blobs, which you pick under **Achievements & styles** on the title screen or pause menu.

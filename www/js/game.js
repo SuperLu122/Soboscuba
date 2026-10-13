@@ -254,7 +254,6 @@
     var nb = new SB.Blob(A.value * 2, cx, cy, vx * 0.6, vy * 0.6, A.R);
     nb.parents = [{ x: A.cx, y: A.cy, r: A.curR }, { x: B.cx, y: B.cy, r: B.curR }];
     world.add(nb);
-    nb.joy = 1.3;
 
     var level = nb.level;
     S.combo = S.comboT > 0 ? S.combo + 1 : 1;
@@ -562,7 +561,6 @@
     if (S.mode === 'paused') return;
 
     world.step();
-    updateSobos(dt);
     if (S.mode === 'play') {
       doMerges();
       checkDanger(dt);
@@ -767,136 +765,7 @@
     return g;
   }
 
-  /* ---------- sobo moods ----------
-   * Every sobo has a face that reacts to what is going on: it watches the
-   * shot being lined up, follows blobs flying past, gazes longingly at a
-   * matching neighbour, squeals in flight, scrunches up when hit, beams
-   * after merging, sweats over the line, and dozes off when left alone. */
-  function updateSobos(dt) {
-    var bl = world.blobs, i, j, b, o;
-    var flyer = null, aimP = null;
-    if (drag && S.mode === 'play' && S.readyT <= 0) {
-      var pl = currentPull();
-      if (Math.hypot(pl.x, pl.y) >= DEAD_ZONE) aimP = spawnPoint(pl);
-    }
-    for (i = 0; i < bl.length; i++) {
-      b = bl[i];
-      if (b.mood === undefined) initFace(b);
-      if (b.touch || b.age > 3) b.landed = true;
-      if (b.track && !b.landed && (!flyer || b.age < flyer.age)) flyer = b;
-    }
-    for (i = 0; i < bl.length; i++) {
-      b = bl[i];
-      var sp = Math.hypot(b.vx, b.vy);
-      var dv = Math.hypot(b.vx - b.pvx, b.vy - b.pvy);
-      b.pvx = b.vx; b.pvy = b.vy;
-      if (dv > 260 && b.age > 0.1) b.ouch = 0.45;
-      if (b.ouch > 0) b.ouch -= dt;
-      if (b.joy > 0) b.joy -= dt;
-      b.still = sp < 12 ? b.still + dt : 0;
-      if (b.still > 0 && b.ouch > 0) b.still = 0;
-
-      // A matching neighbour close enough to touch soon.
-      var mate = null, best = 1e9;
-      for (j = 0; j < bl.length; j++) {
-        o = bl[j];
-        if (o === b || o.value !== b.value) continue;
-        var d = Math.hypot(o.cx - b.cx, o.cy - b.cy) - b.curR - o.curR;
-        if (d < b.curR * 1.2 && d < best) { best = d; mate = o; }
-      }
-
-      // Hysteresis so a face doesn't flicker while the squash hovers near the limit.
-      if (b.squish > 0.92) b.strained = true; else if (b.squish < 0.7) b.strained = false;
-      var over = b.cy - b.curR < CFG.dangerY && S.dangerT > 0 && b.age > 1.5;
-      var m = 'idle';
-      if (S.mode === 'over') m = 'sad';
-      else if (b.joy > 0) m = 'happy';
-      else if (b.track && !b.landed) m = 'wee';
-      else if (b.ouch > 0) m = 'ouch';
-      else if (over) m = 'worry';
-      else if (b.strained) m = 'strain';
-      else if (mate) m = 'eager';
-      else if (b.still > 14) m = 'sleep';
-      b.mood = m;
-      if (m !== 'sleep' && b.still > 14 && sp > 30) b.still = 0;
-
-      // Where to look (unit-ish vector).
-      var tx = 0, ty = 0, tgt = null;
-      if (m === 'sleep' || m === 'happy') { tx = 0; ty = 0.2; }
-      else if (m === 'sad') { tx = 0; ty = 1; }
-      else if (m === 'worry') { tx = 0; ty = -1; }
-      else if (m === 'wee') { tx = b.vx; ty = b.vy; var vl = Math.hypot(tx, ty) || 1; tx /= vl; ty /= vl; }
-      else if (aimP) tgt = aimP;
-      else if (flyer && flyer !== b) tgt = { x: flyer.cx, y: flyer.cy };
-      else if (mate) tgt = { x: mate.cx, y: mate.cy };
-      else {
-        b.wanderT -= dt;
-        if (b.wanderT <= 0) {
-          b.wanderT = 1.5 + Math.random() * 3.5;
-          var a = Math.random() * Math.PI * 2, r = Math.random() < 0.35 ? 0 : 0.5 + Math.random() * 0.5;
-          b.wx = Math.cos(a) * r; b.wy = Math.sin(a) * r * 0.7;
-        }
-        tx = b.wx; ty = b.wy;
-      }
-      if (tgt) {
-        var gx = tgt.x - b.cx, gy = tgt.y - b.cy, gl = Math.hypot(gx, gy) || 1;
-        tx = gx / gl; ty = gy / gl;
-      }
-      var k = Math.min(1, dt * (m === 'wee' ? 14 : 7));
-      b.gx += (tx - b.gx) * k; b.gy += (ty - b.gy) * k;
-      tickBlink(b, dt);
-    }
-    // The blob in the launcher and the next one up.
-    var lf = S.launchFace, nf = S.nextFace;
-    var lp = currentPull(), ll = Math.hypot(lp.x, lp.y);
-    lf.mood = drag && ll > MAX_PULL * 0.55 ? 'determined' : drag && ll >= DEAD_ZONE ? 'eager' : 'idle';
-    var lx = 0, ly = 0.7;
-    if (drag && ll >= DEAD_ZONE) { lx = lp.x / ll; ly = lp.y / ll; }
-    else if (flyer) { lx = flyer.cx - CFG.launchX; ly = flyer.cy - CFG.launchY; var fl = Math.hypot(lx, ly) || 1; lx /= fl; ly /= fl; }
-    lf.gx += (lx - lf.gx) * Math.min(1, dt * 9); lf.gy += (ly - lf.gy) * Math.min(1, dt * 9);
-    nf.mood = 'idle';
-    nf.gx += (-0.9 - nf.gx) * Math.min(1, dt * 5); nf.gy += (0.35 - nf.gy) * Math.min(1, dt * 5);
-    tickBlink(lf, dt); tickBlink(nf, dt);
-  }
-
-  function initFace(b) {
-    b.mood = 'idle'; b.gx = 0; b.gy = 0.3; b.wx = 0; b.wy = 0.3; b.wanderT = Math.random() * 2;
-    b.blinkT = 1 + Math.random() * 4; b.blinkA = 0; b.joy = b.joy || 0; b.ouch = 0; b.still = 0;
-    b.pvx = b.vx; b.pvy = b.vy;
-  }
-  function newFace() { var f = {}; initFace(f); f.vx = f.vy = 0; return f; }
-  S.launchFace = newFace();
-  S.nextFace = newFace();
-
-  function tickBlink(f, dt) {
-    f.blinkT -= dt;
-    if (f.blinkT <= 0) { f.blinkA = 0.14; f.blinkT = 2.2 + Math.random() * 4.5; if (Math.random() < 0.2) f.blinkT = 0.3; }
-    if (f.blinkA > 0) f.blinkA -= dt;
-  }
-
-  // How far a blob is squashed: principal axes of its outline, relative to
-  // a circle of radius R. The face is drawn through this so it squishes too.
-  function bodyStretch(pts, n, cx, cy, R) {
-    var sxx = 0, syy = 0, sxy = 0;
-    for (var i = 0; i < n; i++) {
-      var dx = pts[i * 2] - cx, dy = pts[i * 2 + 1] - cy;
-      sxx += dx * dx; syy += dy * dy; sxy += dx * dy;
-    }
-    sxx /= n; syy /= n; sxy /= n;
-    var tr = (sxx + syy) / 2, det = Math.sqrt(Math.max(0, (sxx - syy) * (sxx - syy) / 4 + sxy * sxy));
-    var l1 = tr + det, l2 = Math.max(1e-3, tr - det);
-    var th = 0.5 * Math.atan2(2 * sxy, sxx - syy);
-    var base = R * R / 2;
-    var s1 = Math.sqrt(l1 / base), s2 = Math.sqrt(l2 / base);
-    var norm = 1 / Math.sqrt(s1 * s2);   // keep the face's size, just its shape
-    s1 = Math.max(0.6, Math.min(1.6, s1 * norm));
-    s2 = Math.max(0.6, Math.min(1.6, s2 * norm));
-    var c = Math.cos(th), s = Math.sin(th);
-    return [c * c * s1 + s * s * s2, c * s * (s1 - s2), s * s * s1 + c * c * s2];
-  }
-
   function drawBlob(b) {
-    if (b.mood === undefined) initFace(b);
     var pts = world.outline(b, outlineBuf);
     var R = b.curR;
     smoothPath(pts, b.n);
@@ -906,13 +775,7 @@
     ctx.strokeStyle = lv(b.level).dark;
     ctx.stroke();
     drawGloss(b.cx, b.cy, R);
-    var m = bodyStretch(pts, b.n, b.cx, b.cy, R - SB.PR * 0.5);
-    ctx.save();
-    ctx.translate(b.cx, b.cy);
-    ctx.transform(m[0], m[1], m[1], m[2], 0, 0);
-    ctx.rotate(Math.max(-0.3, Math.min(0.3, b.vx / 2400)));
-    drawFace(R, b.level, b.value, b);
-    ctx.restore();
+    drawNumber(b.cx, b.cy, R, b.value, b.level);
   }
 
   function drawGloss(cx, cy, R) {
@@ -922,155 +785,19 @@
     ctx.fill();
   }
 
-  /* A sobo face in local coordinates (origin at the body centre). */
-  function drawFace(R, level, value, f) {
-    var c = lv(level), ink = c.ink, mood = f.mood || 'idle';
-    var small = R < 30;
-    var gx = f.gx || 0, gy = f.gy || 0;
-    var gl = Math.hypot(gx, gy);
-    if (gl > 1) { gx /= gl; gy /= gl; }
-    // The whole face turns a little toward where it is looking.
-    var fx0 = gx * R * 0.1, fy0 = gy * R * 0.07;
-    var ex = R * (small ? 0.33 : 0.29), ey = fy0 - R * (small ? 0.27 : 0.2);
-    var erx = Math.max(1.9, R * (small ? 0.1 : 0.085)), ery = Math.max(2.4, R * (small ? 0.125 : 0.11));
-    var my = fy0 + R * (small ? -0.02 : 0.05);
-    var mw = R * (small ? 0.15 : 0.16);
-    var lw = Math.max(1.4, R * 0.042);
-    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-    ctx.lineWidth = lw;
-    ctx.strokeStyle = ink; ctx.fillStyle = ink;
-
-    // Cheeks.
-    if (R >= 22 && mood !== 'sad') {
-      ctx.fillStyle = mood === 'happy' || mood === 'eager' || mood === 'strain' ? 'rgba(255,90,130,0.45)' : 'rgba(255,110,140,0.3)';
-      for (var cs = -1; cs <= 1; cs += 2) {
-        ctx.beginPath();
-        ctx.ellipse(fx0 + cs * R * 0.47, my - R * 0.03, R * 0.11, R * 0.065, 0, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.fillStyle = ink;
-    }
-
-    var blink = f.blinkA > 0 ? Math.abs(f.blinkA - 0.07) / 0.07 : 1;   // 1 open .. 0 shut
-    var px = gx * erx * 0.55, py = gy * ery * 0.45;                      // pupil shift
-    for (var s = -1; s <= 1; s += 2) {
-      var x = fx0 + s * ex, y = ey;
-      ctx.beginPath();
-      if (mood === 'happy') {
-        ctx.arc(x, y + ery * 0.5, erx * 1.15, Math.PI * 1.1, Math.PI * 1.9);
-        ctx.stroke();
-      } else if (mood === 'sleep') {
-        ctx.arc(x, y - ery * 0.2, erx * 1.1, Math.PI * 0.15, Math.PI * 0.85);
-        ctx.stroke();
-      } else if (mood === 'ouch' || mood === 'strain') {
-        var w = erx * 1.05, h = ery * 0.9;
-        ctx.moveTo(x - s * w, y - h); ctx.lineTo(x + s * w * 0.6, y); ctx.lineTo(x - s * w, y + h);
-        ctx.stroke();
-      } else {
-        var big = mood === 'wee' ? 1.3 : 1;
-        var ry = ery * big * blink;
-        if (ry < ery * 0.25) {
-          ctx.moveTo(x - erx, y); ctx.lineTo(x + erx, y); ctx.stroke();
-        } else {
-          ctx.ellipse(x + px, y + py, erx * big, ry, 0, 0, Math.PI * 2);
-          ctx.fill();
-          if (R >= 18) {
-            ctx.fillStyle = 'rgba(255,255,255,0.92)';
-            ctx.beginPath();
-            ctx.arc(x + px - erx * 0.3 * big, y + py - ry * 0.38, erx * 0.42 * big, 0, Math.PI * 2);
-            ctx.fill();
-            if (R >= 34) {
-              ctx.beginPath();
-              ctx.arc(x + px + erx * 0.32 * big, y + py + ry * 0.35, erx * 0.18 * big, 0, Math.PI * 2);
-              ctx.fill();
-            }
-            ctx.fillStyle = ink;
-          }
-          if (mood === 'sad' || mood === 'worry' || mood === 'determined') {
-            // Brows: worried ones tilt up in the middle, determined ones down.
-            var tilt = mood === 'determined' ? -1 : 1;
-            ctx.beginPath();
-            ctx.moveTo(x - s * erx * 1.2, y - ery * 1.7 - tilt * ery * 0.35);
-            ctx.lineTo(x + s * erx * 1.0, y - ery * 1.7 + tilt * ery * 0.45);
-            ctx.stroke();
-          }
-        }
-      }
-    }
-
-    // Mouth.
-    ctx.beginPath();
-    if (mood === 'happy' || mood === 'eager') {
-      var r0 = mw * (mood === 'happy' ? 0.85 : 0.6);
-      ctx.moveTo(fx0 - r0, my);
-      ctx.arc(fx0, my, r0, 0, Math.PI);
-      ctx.closePath();
-      ctx.fill();
-      if (R >= 26) {
-        ctx.fillStyle = 'rgba(255,120,150,0.95)';
-        ctx.beginPath();
-        ctx.ellipse(fx0, my + r0 * 0.62, r0 * 0.5, r0 * 0.28, 0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = ink;
-      }
-    } else if (mood === 'wee') {
-      if (small) ctx.ellipse(fx0, my + mw * 0.12, mw * 0.32, mw * 0.36, 0, 0, Math.PI * 2);
-      else ctx.ellipse(fx0, my + mw * 0.3, mw * 0.42, mw * 0.55, 0, 0, Math.PI * 2);
-      ctx.fill();
-    } else if (mood === 'ouch' || mood === 'strain' || mood === 'worry') {
-      var zw = mw * (mood === 'worry' ? 0.7 : 0.9), zh = mw * 0.18;
-      ctx.moveTo(fx0 - zw, my + zh);
-      for (var z = 1; z <= 4; z++) ctx.lineTo(fx0 - zw + zw * 2 * z / 4, my + (z % 2 ? -zh : zh));
-      ctx.stroke();
-    } else if (mood === 'sad') {
-      ctx.arc(fx0, my + mw * 0.75, mw * 0.6, Math.PI * 1.2, Math.PI * 1.8);
-      ctx.stroke();
-    } else if (mood === 'sleep') {
-      ctx.ellipse(fx0, my + mw * 0.15, mw * 0.18, mw * 0.24, 0, 0, Math.PI * 2);
-      ctx.fill();
-    } else if (mood === 'determined') {
-      ctx.moveTo(fx0 - mw * 0.5, my + mw * 0.1); ctx.lineTo(fx0 + mw * 0.5, my + mw * 0.1);
-      ctx.stroke();
-    } else {
-      // Contented little "w" smile.
-      var hw = mw * 0.5;
-      ctx.moveTo(fx0 - hw * 2, my - hw * 0.25);
-      ctx.quadraticCurveTo(fx0 - hw, my + hw * 1.1, fx0, my);
-      ctx.quadraticCurveTo(fx0 + hw, my + hw * 1.1, fx0 + hw * 2, my - hw * 0.25);
-      ctx.stroke();
-    }
-
-    // Extras.
-    if (mood === 'worry' && R >= 20) {
-      ctx.fillStyle = 'rgba(160,225,255,0.95)';
-      var sx = fx0 + R * 0.55, sy = ey - R * 0.12 + ((S.time * 0.6) % 1) * R * 0.25;
-      ctx.beginPath();
-      ctx.moveTo(sx, sy - R * 0.13);
-      ctx.quadraticCurveTo(sx + R * 0.08, sy, sx, sy + R * 0.04);
-      ctx.quadraticCurveTo(sx - R * 0.08, sy, sx, sy - R * 0.13);
-      ctx.fill();
-    } else if (mood === 'sleep' && R >= 20) {
-      var zt = (S.time * 0.5 + (f.blinkT || 0) * 0.1) % 1;
-      ctx.globalAlpha = Math.sin(zt * Math.PI) * 0.8;
-      ctx.font = Math.max(9, R * 0.22) + 'px ' + FONT;
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText('z', fx0 + R * (0.45 + zt * 0.2), ey - R * (0.25 + zt * 0.3));
-      ctx.globalAlpha = 1;
-    }
-
-    // The number sits on the tummy.
+  function drawNumber(cx, cy, R, value, level) {
     var txt = label(value);
-    var fs = small ? Math.max(9.5, R * 0.6) : Math.min(50, R * (txt.length > 3 ? 0.32 : txt.length > 2 ? 0.38 : 0.44));
+    var fs = Math.min(64, R * (txt.length > 3 ? 0.6 : txt.length > 2 ? 0.72 : txt.length > 1 ? 0.85 : 1.0));
     ctx.font = fs + 'px ' + FONT;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillStyle = ink;
-    ctx.globalAlpha = 0.85;
-    ctx.fillText(txt, fx0 * 0.5, R * (small ? 0.4 : 0.46) + fs * 0.05);
+    ctx.fillStyle = lv(level).ink;
+    ctx.globalAlpha = 0.9;
+    ctx.fillText(txt, cx, cy + fs * 0.05);
     ctx.globalAlpha = 1;
   }
 
-  function drawStaticBlob(value, cx, cy, R, stretchX, stretchY, ang, face) {
+  function drawStaticBlob(value, cx, cy, R, stretchX, stretchY, ang) {
     var level = Math.round(Math.log2(value));
     ctx.save();
     ctx.translate(cx, cy);
@@ -1085,7 +812,7 @@
     ctx.strokeStyle = lv(level).dark;
     ctx.stroke();
     drawGloss(0, 0, R);
-    drawFace(R, level, value, face || { mood: 'idle', gx: 0, gy: 0.4 });
+    drawNumber(0, 0, R, value, level);
     ctx.restore();
   }
 
@@ -1124,7 +851,7 @@
       var wob = 1 + Math.sin(S.time * 5) * 0.025;
       var st = len / MAX_PULL;
       var ang = Math.atan2(pull.y, pull.x);
-      drawStaticBlob(S.cur, p.x, p.y, R * wob * pop, 1 + st * 0.18, 1 - st * 0.12, ang, S.launchFace);
+      drawStaticBlob(S.cur, p.x, p.y, R * wob * pop, 1 + st * 0.18, 1 - st * 0.12, ang);
     } else {
       ctx.strokeStyle = 'rgba(230,250,255,0.25)';
       ctx.setLineDash([4, 5]);
@@ -1151,7 +878,7 @@
     ctx.lineTo(bx, ay); ctx.stroke();
     if (ease > 0.05) drawTrajectory(p, pull, R);
     var st = Math.hypot(pull.x, pull.y) / MAX_PULL;
-    drawStaticBlob(S.cur, p.x, p.y, R, 1 + st * 0.18, 1 - st * 0.12, Math.atan2(pull.y, pull.x), S.launchFace);
+    drawStaticBlob(S.cur, p.x, p.y, R, 1 + st * 0.18, 1 - st * 0.12, Math.atan2(pull.y, pull.x));
 
     var fade = cyc > 0.85 ? 1 - (cyc - 0.85) / 0.15 : Math.min(1, cyc / 0.1);
     ctx.globalAlpha = fade;
@@ -1262,7 +989,7 @@
     ctx.textAlign = 'right';
     ctx.fillText('NEXT', CFG.W - 20, 30);
     var nR = SB.radiusFor(Math.log2(S.next)) * 0.8;
-    drawStaticBlob(S.next, CFG.W - 20 - 28, 80, nR, 1, 1, 0, S.nextFace);
+    drawStaticBlob(S.next, CFG.W - 20 - 28, 80, nR, 1, 1, 0);
   }
 
   /* ---------- main loop ---------- */

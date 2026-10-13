@@ -60,8 +60,6 @@
     this.met = {};
     this.floorHit = false;
     this.sideHit = false;
-    this.squish = 0;          // 0..1 visual squash amount, for faces
-    this.blink = Math.random() * 4;
 
     // Unit directions of the rest shape.
     this.ux = new Float32Array(this.n);
@@ -342,18 +340,15 @@
       // Low shape stiffness so blobs sag and squash like mochi. Bigger blobs
       // are a little softer still. Volume is kept by the pressure pass below.
       var stiff = CFG.shapeStiff * (1.15 - Math.min(0.45, b.level * 0.04));
-      var dev = 0;
       for (i = 0; i < n; i++) {
         k = o + i;
         var qx = b.ux[i] * r, qy = b.uy[i] * r;
         var gx = cx + c * qx - sn * qy;
         var gy = cy + sn * qx + c * qy;
         var ex = gx - X[k], ey = gy - Y[k];
-        dev += Math.abs(ex) + Math.abs(ey);
         X[k] += ex * stiff;
         Y[k] += ey * stiff;
       }
-      b.squish = Math.min(1, dev / n / (r * 0.18 + 1));
 
       // Smoothing (a bending term): keeps the outline round and free of
       // lumps while the shape as a whole squashes. Shrinks area slightly,
