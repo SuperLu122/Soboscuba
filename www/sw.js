@@ -1,6 +1,6 @@
 /* Offline cache for the installed (home screen / desktop) app.
  * Bump VERSION whenever any cached file changes. */
-var VERSION = 'soboscuba-v1';
+var VERSION = 'soboscuba-v2';
 var FILES = [
   './',
   'index.html',

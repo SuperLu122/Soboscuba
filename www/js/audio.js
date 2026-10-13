@@ -87,6 +87,11 @@
       tone('triangle', 330, 150, 0.5, 0.18, 0.25);
       tone('sine', 220, 90, 0.8, 0.2, 0.5);
     },
-    click: function () { tone('sine', 700, 900, 0.05, 0.08); }
+    click: function () { tone('sine', 700, 900, 0.05, 0.08); },
+    award: function () {
+      tone('triangle', 660, 660, 0.12, 0.14);
+      tone('triangle', 880, 880, 0.12, 0.14, 0.1);
+      tone('triangle', 1320, 1320, 0.25, 0.12, 0.2);
+    }
   };
 })(window.SB = window.SB || {});

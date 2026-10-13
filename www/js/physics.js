@@ -24,6 +24,10 @@
     launchX: 210, launchY: 100,
     gravity: 1500,
     substeps: 8,
+    viscosity: 0.02,
+    reboundDamp: 0.12,
+    spinDamp: 0.04,
+    mergeSlop: 5,
     dt: 1 / 60
   };
 
@@ -48,6 +52,11 @@
     this.cx = cx; this.cy = cy;
     this.vx = vx || 0; this.vy = vy || 0;
     this.dead = false;
+    // Shot tracking for achievements: what a launched blob has touched.
+    this.track = false;
+    this.met = {};
+    this.floorHit = false;
+    this.sideHit = false;
     this.squish = 0;          // 0..1 visual squash amount, for faces
     this.blink = Math.random() * 4;
 
@@ -186,13 +195,41 @@
     for (var s = 0; s < steps; s++) {
       this._integrate(g);
       this._shapeMatch();
+      for (i = 0; i < this.blobs.length; i++) this.blobs[i].touch = false;
       this._collide();
       this._walls();
+      this._contactDamping();
     }
 
     for (i = 0; i < this.blobs.length; i++) this.measure(this.blobs[i]);
     if (this._untangle()) {
       for (i = 0; i < this.blobs.length; i++) this.measure(this.blobs[i]);
+    }
+    this._nearMerges();
+  };
+
+  /* Equal blobs wedged a hair apart look like they touch, so treat a gap
+   * smaller than mergeSlop as contact for merging. */
+  World.prototype._nearMerges = function () {
+    var bl = this.blobs, X = this.X, Y = this.Y, slop = CFG.mergeSlop;
+    var lim = (PD + slop) * (PD + slop);
+    for (var i = 0; i < bl.length; i++) {
+      for (var j = i + 1; j < bl.length; j++) {
+        var A = bl[i], B = bl[j];
+        if (A.value !== B.value) continue;
+        var key = A.id < B.id ? A.id + ':' + B.id : B.id + ':' + A.id;
+        if (this.contactKeys[key]) continue;
+        var dx = B.cx - A.cx, dy = B.cy - A.cy, reach = A.curR + B.curR + slop;
+        if (dx * dx + dy * dy > reach * reach) continue;
+        var hit = false;
+        for (var a = A.off; a < A.off + A.n && !hit; a++) {
+          for (var b = B.off; b < B.off + B.n; b++) {
+            var ex = X[a] - X[b], ey = Y[a] - Y[b];
+            if (ex * ex + ey * ey < lim) { hit = true; break; }
+          }
+        }
+        if (hit) { this.contactKeys[key] = true; this.contacts.push([A, B]); }
+      }
     }
   };
 
@@ -313,6 +350,32 @@
         Y[k] += ey * stiff;
       }
       b.squish = Math.min(1, dev / n / (r * 0.18 + 1));
+
+      // Skin: adjacent ring particles may not drift apart far enough to let
+      // another blob's particle slip between them.
+      var maxSep = PD * 0.96;
+      for (i = 0; i < n; i++) {
+        var a1 = o + i, a2 = o + (i + 1) % n;
+        var sx = X[a2] - X[a1], sy = Y[a2] - Y[a1];
+        var sd = Math.sqrt(sx * sx + sy * sy);
+        if (sd > maxSep) {
+          var corr = (sd - maxSep) / sd * 0.5;
+          X[a1] += sx * corr; Y[a1] += sy * corr;
+          X[a2] -= sx * corr; Y[a2] -= sy * corr;
+        }
+      }
+
+      // Jelly viscosity: damp each particle's velocity relative to the
+      // blob's mean velocity. Soaks up spring-back bounce and rolling while
+      // leaving a short visible wobble.
+      var PX = this.PX, PY = this.PY, mvx = 0, mvy = 0;
+      for (k = o; k < o + n; k++) { mvx += X[k] - PX[k]; mvy += Y[k] - PY[k]; }
+      mvx /= n; mvy /= n;
+      var vd = CFG.viscosity;
+      for (k = o; k < o + n; k++) {
+        PX[k] += ((X[k] - PX[k]) - mvx) * vd;
+        PY[k] += ((Y[k] - PY[k]) - mvy) * vd;
+      }
     }
   };
 
@@ -373,6 +436,9 @@
             if (-rn > this.impact) this.impact = -rn;
 
             var A = blobs[ok], B = blobs[oq];
+            A.touch = B.touch = true;
+            if (A.track) A.met[B.id] = 1;
+            if (B.track) B.met[A.id] = 1;
             if (A.value === B.value) {
               var key = A.id < B.id ? A.id + ':' + B.id : B.id + ':' + A.id;
               if (!this.contactKeys[key]) {
@@ -390,12 +456,51 @@
     var X = this.X, Y = this.Y, PX = this.PX, PY = this.PY;
     var L = CFG.wallL + PR, Rr = CFG.wallR - PR;
     var F = CFG.floor - PR, T = CFG.ceil + PR;
-    var wf = 0.25;
+    var wf = 0.25, owner = this.owner, blobs = this.blobs;
     for (var k = 0; k < this.count; k++) {
-      if (X[k] < L) { X[k] = L; PY[k] += (Y[k] - PY[k]) * wf; }
-      else if (X[k] > Rr) { X[k] = Rr; PY[k] += (Y[k] - PY[k]) * wf; }
-      if (Y[k] > F) { Y[k] = F; PX[k] += (X[k] - PX[k]) * wf; }
-      else if (Y[k] < T) { Y[k] = T; }
+      var hit = 0;
+      if (X[k] < L) { X[k] = L; PY[k] += (Y[k] - PY[k]) * wf; hit = 1; }
+      else if (X[k] > Rr) { X[k] = Rr; PY[k] += (Y[k] - PY[k]) * wf; hit = 1; }
+      if (Y[k] > F) { Y[k] = F; PX[k] += (X[k] - PX[k]) * wf; hit = 2; }
+      else if (Y[k] < T) { Y[k] = T; hit = 2; }
+      if (hit) {
+        var hb = blobs[owner[k]];
+        hb.touch = true;
+        if (hb.track) { if (hit === 1) hb.sideHit = true; else hb.floorHit = true; }
+      }
+    }
+  };
+
+  /* Jelly does not rebound like rubber. While a blob is touching anything,
+   * damp the rebound of its centre of mass (upward motion and motion away
+   * from the side walls) and its spin, so shots land where they are aimed
+   * instead of bouncing and rolling away. */
+  World.prototype._contactDamping = function () {
+    var X = this.X, Y = this.Y, PX = this.PX, PY = this.PY;
+    var up = CFG.reboundDamp, spin = CFG.spinDamp;
+    for (var bi = 0; bi < this.blobs.length; bi++) {
+      var b = this.blobs[bi];
+      if (!b.touch) continue;
+      var o = b.off, n = b.n, k, cx = 0, cy = 0, vx = 0, vy = 0;
+      for (k = o; k < o + n; k++) {
+        cx += X[k]; cy += Y[k];
+        vx += X[k] - PX[k]; vy += Y[k] - PY[k];
+      }
+      cx /= n; cy /= n; vx /= n; vy /= n;
+      var dvx = 0, dvy = vy < 0 ? vy * up : 0;
+      if ((vx > 0 && cx < CFG.wallL + b.curR + 2) || (vx < 0 && cx > CFG.wallR - b.curR - 2)) dvx = vx * up;
+      // Angular velocity about the centre.
+      var num = 0, den = 0;
+      for (k = o; k < o + n; k++) {
+        var rx = X[k] - cx, ry = Y[k] - cy;
+        var ux = X[k] - PX[k] - vx, uy = Y[k] - PY[k] - vy;
+        num += rx * uy - ry * ux; den += rx * rx + ry * ry;
+      }
+      var w = den > 0 ? (num / den) * spin : 0;
+      for (k = o; k < o + n; k++) {
+        PX[k] += dvx - w * (Y[k] - cy);
+        PY[k] += dvy + w * (X[k] - cx);
+      }
     }
   };
 

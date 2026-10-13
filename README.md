@@ -17,6 +17,30 @@ Pull back to fling soft-body numbered blobs into an underwater tank. Two equal b
 - Merges within 1.4 s of each other build a combo multiplier.
 - Blobs can merge in mid-air.
 - Your game saves automatically. Leave and come back, and **Continue** picks up where you left off. Your best score is kept too.
+- The first game shows a short animated tutorial.
+- On a phone, play upright. Turning it sideways pauses the game until you turn it back.
+
+## Achievements and blob styles
+
+Thirteen achievements, shown in a pop-up as you earn them. Four of them unlock new colour styles for the blobs, which you pick under **Achievements & styles** on the title screen or pause menu.
+
+| Achievement | How to earn it | Unlocks |
+|---|---|---|
+| First squish | Merge two blobs | |
+| Getting chunky | Make a 128 | |
+| Big wobbler | Make a 512 | Pastel style |
+| Tank boss | Make a 2k | Midnight style |
+| Leviathan | Make an 8k | |
+| Chain reaction | Combo ×3 | |
+| Cascade | Combo ×5 | Neon style |
+| Bullseye | Merge a blob with the first blob it touches | |
+| Bank shot | Bounce off a wall straight into a merge | |
+| Close call | Clear the line with under half a second to spare | |
+| Five figures | Score 10,000 | |
+| Deep diver | Score 25,000 | Sunset style |
+| Abyssal | Score 100,000 | |
+
+Sound and vibration can be switched off in the pause menu. Vibration uses the native haptics engine in the iOS app. Safari on iPhone doesn't allow web pages to vibrate, so the home-screen version has sound only.
 
 ## Run it on PC
 
@@ -46,7 +70,7 @@ There is nothing to install or build.
 This wraps the same web game in a native iOS app. It needs a Mac with Xcode, and an Apple Developer account to put it on the App Store or TestFlight.
 
 ```sh
-npm install
+npm install          # includes @capacitor/haptics for native vibration
 npx cap add ios      # creates the ios/ Xcode project (first time only)
 npx cap sync ios     # copies www/ into the app; run again after every change
 npx cap open ios     # opens Xcode, then press Run
@@ -82,7 +106,14 @@ Like the original, each blob is a closed ring of small circular particles rather
 2. **Shape matching** finds the best-fit rotation of each blob's rest circle and pulls the particles toward it. Bigger blobs are slightly softer, so they jiggle more.
 3. **Collisions** resolve particle-vs-particle contacts between different blobs (with friction) and particle-vs-wall contacts. A uniform spatial hash keeps this fast.
 
-Merged blobs start from their two parents' outline and inflate into a circle. A safety pass separates any ring that ends up inside another. A crowded tank (about 600 particles) simulates in roughly 1 ms per frame on a laptop.
+A few extra rules make it feel like jelly rather than rubber:
+
+- **Contact damping.** While touching something, a blob's rebound and spin are damped, so shots land where they are aimed instead of bouncing and rolling away.
+- **Skin.** Neighbouring ring particles can't drift apart, so small blobs can't slip inside big ones.
+- **Merge tolerance.** Equal blobs wedged a hair apart still merge, because they look like they're touching.
+- **Peanut start.** Merged blobs start from their two parents' outline and inflate into a circle. A safety pass separates any ring that does end up inside another.
+
+A crowded tank (about 600 particles) simulates in roughly 1 ms per frame on a laptop.
 
 ## Credits
 
