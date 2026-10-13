@@ -33,5 +33,6 @@ Set `CHROMIUM_PATH` to use a specific Chromium binary.
 | files.js | `www/index.html` and the single-file build play straight from disk with fonts loaded |
 | offline.js | After one visit the service worker serves the game and fonts offline |
 | rotate.js | A sideways phone pauses and shows the rotate prompt |
+| overcard.js | Game over numbers stay on one line, six digits on an iPhone SE |
 | layouts.js | Phones, iPads, laptop, 4K and a narrow window all show the whole field with the HUD clear of it |
 | themes.js | The same board in all 28 colour themes, for a visual check |
