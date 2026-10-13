@@ -1,0 +1,17 @@
+{
+  "name": "Soboscuba",
+  "short_name": "Soboscuba",
+  "description": "Pull back, let go, and merge squishy numbered blobs before the tank overflows.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone"],
+  "orientation": "portrait",
+  "background_color": "#0a3d5c",
+  "theme_color": "#0a3d5c",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

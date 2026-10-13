@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Soboscuba</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="description" content="Pull back, let go, and merge squishy numbered blobs before the tank overflows.">
+  <meta name="theme-color" content="#0a3d5c">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Soboscuba">
+  <meta name="format-detection" content="telephone=no">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="preload" href="fonts/lilita-one-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <canvas id="game" aria-label="Soboscuba game board"></canvas>
+  <div id="safe" aria-hidden="true"></div>
+
+  <section id="title" class="overlay" aria-labelledby="logo">
+    <div class="card card--title">
+      <h1 id="logo" class="logo" aria-label="Soboscuba">
+        <span style="--c:#9be7ff">s</span><span style="--c:#5fd3c6">o</span><span style="--c:#ffd166">b</span><span style="--c:#ff9f5a">o</span><span style="--c:#ff6b81">s</span><span style="--c:#c77dff">c</span><span style="--c:#7b8cff">u</span><span style="--c:#4ade80">b</span><span style="--c:#f472b6">a</span>
+      </h1>
+      <p class="tagline">Pull back. Let go. Merge the blobs.</p>
+      <div class="actions">
+        <button id="btn-continue" class="btn btn--primary" type="button" hidden>Continue</button>
+        <button id="btn-play" class="btn btn--primary" type="button">New game</button>
+      </div>
+      <ul class="howto">
+        <li><b>Drag back</b> from anywhere and let go to fling the blob. Pull further for a harder shot.</li>
+        <li><b>Tap</b> to drop it gently straight down.</li>
+        <li><b>Equal numbers merge</b>: 2 + 2 = 4, all the way up to 16k.</li>
+        <li>Keep the pile <b>below the dashed line</b>. Three seconds over it and the tank is full.</li>
+      </ul>
+      <p class="best">Best score <span id="title-best">0</span></p>
+    </div>
+  </section>
+
+  <section id="pause" class="overlay" hidden aria-labelledby="pause-h">
+    <div class="card">
+      <h2 id="pause-h">Paused</h2>
+      <div class="actions actions--stack">
+        <button id="btn-resume" class="btn btn--primary" type="button">Resume</button>
+        <button id="btn-restart" class="btn" type="button">Restart</button>
+        <button id="btn-sound" class="btn" type="button">Sound: on</button>
+        <button id="btn-home" class="btn btn--quiet" type="button">Save and quit to title</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="over" class="overlay" hidden aria-labelledby="over-h">
+    <div class="card">
+      <h2 id="over-h">The tank is full</h2>
+      <p id="over-newbest" class="newbest" hidden>New best score</p>
+      <dl class="stats">
+        <div><dt>Score</dt><dd id="over-score">0</dd></div>
+        <div><dt>Best</dt><dd id="over-best">0</dd></div>
+        <div><dt>Biggest blob</dt><dd id="over-biggest">2</dd></div>
+      </dl>
+      <div class="actions actions--stack">
+        <button id="btn-again" class="btn btn--primary" type="button">Play again</button>
+        <button id="btn-over-home" class="btn btn--quiet" type="button">Title screen</button>
+      </div>
+    </div>
+  </section>
+
+  <script src="js/physics.js"></script>
+  <script src="js/audio.js"></script>
+  <script src="js/game.js"></script>
+  <script>
+    // Offline support when served over http(s). Opening index.html straight
+    // from disk and the native iOS wrapper both skip this.
+    if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
+      window.addEventListener('load', function () {
+        navigator.serviceWorker.register('sw.js').catch(function () {});
+      });
+    }
+  </script>
+</body>
+</html>
