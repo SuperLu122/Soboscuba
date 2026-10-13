@@ -2,7 +2,8 @@
 
 Version 1.0, 2026-10-13.
 Goal: make Soboscuba play like the original sobosuba, using `docs/original-spec.md` as the source of truth for rules and constants.
-Kept from the earlier build: the web and iOS shell, HTML menus, colour themes (Dark stays the default), sound synth, save and resume, PWA and the single-file build.
+Kept from the earlier build: the web and iOS shell, HTML menus, sound synth, save and resume, PWA and the single-file build.
+Colour themes are the original's 28, with its dark mode as the default (the user picked it over a toned-down Dark from a side-by-side render on 2026-10-13).
 
 ## Modules
 

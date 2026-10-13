@@ -9,7 +9,11 @@
     "build:single": "node tools/build-single.js",
     "ios:add": "cap add ios",
     "ios:sync": "cap sync ios",
-    "ios:open": "cap open ios"
+    "ios:open": "cap open ios",
+    "test": "node tests/run.js",
+    "test:node": "node tests/run.js node",
+    "test:e2e": "node tests/run.js e2e",
+    "styles": "python3 tools/gen-styles.py"
   },
   "devDependencies": {
     "@capacitor/cli": "^8.5.3"

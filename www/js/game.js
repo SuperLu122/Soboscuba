@@ -10,7 +10,7 @@
   var TICK = SB.PHYS.tick;
   var SAVE_EVERY = 4;
   var TEACH_LAUNCHES = 4;
-  var DEFAULT_STYLE = 'dark';
+  var DEFAULT_STYLE = 'dark_mode';
   var LIGHT_STYLE = 'light_mode';
 
   var canvas = document.getElementById('game');
@@ -55,7 +55,7 @@
     for (var k in def) st[k] = def[k];
     st.uiColors = {};
     SB.UI_KEYS.forEach(function (key, i) { st.uiColors[key] = def.ui[i]; });
-    var ui = st.uiColors, accent = def.id === DEFAULT_STYLE ? '#b5852b' : def.special;
+    var ui = st.uiColors, accent = def.special;
     var root = document.documentElement.style;
     root.setProperty('--sea', def.bg);
     root.setProperty('--glass', ui.background);
@@ -107,18 +107,21 @@
   }
 
   var toastQueue = [], toastBusy = false;
+  // Desktop: low in the score panel, clear of the +points list. Phone: over the score panel.
   function placeToast() {
     var t = $('toast'), v = R.view;
     if (v.desktop && v.side >= 220) {
       t.style.left = (v.play.x + v.play.w + 16) + 'px';
       t.style.width = (v.side - 32) + 'px';
-      t.style.top = (v.inset[0] + 16) + 'px';
-      t.style.transform = 'none';
+      t.style.top = 'auto';
+      t.style.bottom = (v.inset[2] + 16) + 'px';
+      t.style.setProperty('--toast-x', '0px');
     } else {
       t.style.left = '50%';
-      t.style.width = Math.min(v.w - 32, 360) + 'px';
+      t.style.width = '';
       t.style.top = (v.inset[0] + 8) + 'px';
-      t.style.transform = 'translateX(-50%)';
+      t.style.bottom = 'auto';
+      t.style.setProperty('--toast-x', '-50%');
     }
   }
   function showToast() {

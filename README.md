@@ -2,48 +2,48 @@
 
 A recreation of [sobosuba](https://store.steampowered.com/app/1946560/sobosuba/) for mobile: a squishy physics merge puzzle that runs on **iPhone/iPad** and **PC** (Windows, macOS, Linux).
 
-Pull back to fling squishy numbered sobos into a black tank. Two equal sobos that touch merge into the next number (1 + 1 = 2, 2 + 2 = 4 … up to 16k and beyond). A grey pressure pad bulges out of each side wall, a third of the way down. When the pile presses a pad too hard, that pad's bar on the tank lid fills up. Left alone, the bar slowly drains. A full bar ends the game. Merging makes room.
+Squishy numbered sobos float in through both side walls and wait on a bar near the top of the field.
+Pick one, drag the way you want it to fly, and let go.
+Two equal sobos that touch merge into the next number (1 + 1 = 2, 2 + 2 = 4, and on up).
+A bumper sits in each side wall.
+If the pile ever shoves both bumpers all the way out at the same time, the game is over.
 
-The look follows the original: flat sobos with a blocky number font, a tank with cut bottom corners, the next sobos lined up beside the launcher, and (on a wide screen) the name and score standing on end either side of the tank.
+The rules, sizes, physics constants and colours follow the original game closely.
+They were taken from the original's own code and checked against it running headless in the Godot engine (see `docs/original-spec.md`).
 
 ## How to play
 
 | Action | Touch (iOS) | PC |
 |---|---|---|
-| Aim and fling | Drag back from anywhere, release | Click-drag back, release |
-| Gentle drop | Tap | Click, or <kbd>Space</kbd> / <kbd>↓</kbd> / <kbd>Enter</kbd> |
+| Aim | Touch a sobo on the bar and drag | Left click a sobo on the bar and drag |
+| Launch | Let go | Release the button |
+| Cancel a shot | Drag back to the sobo | Right click |
 | Pause | ☰ button (top left) | ☰ button, <kbd>Esc</kbd> or <kbd>P</kbd> |
+| Mute | Pause menu | <kbd>M</kbd> |
+| Next unlocked theme | Awards & themes | <kbd>K</kbd> |
+| Dark or light mode | Awards & themes | <kbd>L</kbd> |
 
-- Pull further for a harder shot. Hard shots shove the pile around; soft shots place precisely.
-- A white arrow shows the shot's direction and power.
-- Sobos fresh from the launcher have a tinted number. Sobos made by a merge have a black one.
-- Merges within 1.4 s of each other build a combo multiplier.
-- Sobos can merge in mid-air.
-- Your game saves automatically. Leave and come back, and **Continue** picks up where you left off. Your best score is kept too.
-- The first game shows a short animated tutorial.
+- The shot goes the way you drag, and a longer drag shoots harder (full power at 220 px).
+- New sobos have a faint number. Sobos made by a merge have a solid one, and only those count toward your score.
+- Your score is the total of every merge-made sobo still in play, so it grows as you build big sobos.
+- Bigger sobos join the spawn pool as you merge: a 2 after your first merge into 2, a 4 after three merges into 4, and so on.
+- A side stops spawning while sobos block its opening. The bar along the top of the frame shows each side's clear distance.
+- If both sides are blocked and the bar is empty for 3 seconds, both sides spawn at once.
+- The gauges in the side walls show how far each bumper is pushed, and turn red when one is pushed all the way.
+- A phone gets a tall field and a big screen gets the original's wider one, chosen when a game starts.
+- Your game saves automatically. Leave and come back, and **Continue** picks up where you left off. A lost game cannot be resumed.
 - On a phone, play upright. Turning it sideways pauses the game until you turn it back.
 
 ## Achievements and colour themes
 
-Thirteen achievements, shown in a pop-up as you earn them. The default theme is **Dark**: a near-black tank with deep, rich sobo colours. Five achievements unlock extra colour themes, which you pick under **Awards & themes** on the title screen or pause menu.
+All 30 of the original's achievements are here, from "score 0" to "chain from 512 to 4096" and "praise the suncle".
+Each one you earn gives one theme unlock.
+All 28 of the original's colour themes are included. Dark mode, the default, and light mode are free, and the other 26 each cost one unlock.
+Pick them under **Awards & themes** on the title screen or pause menu.
 
-| Achievement | How to earn it | Unlocks |
-|---|---|---|
-| First squish | Merge two sobos | |
-| Getting chunky | Make a 128 | |
-| Big wobbler | Make a 512 | Sunset theme |
-| Tank boss | Make a 2k | Ocean theme |
-| Leviathan | Make an 8k | |
-| Chain reaction | Combo ×3 | |
-| Cascade | Combo ×5 | Candy theme |
-| Bullseye | Merge a sobo with the first sobo it touches | |
-| Bank shot | Bounce off a wall straight into a merge | |
-| Close call | Ease off a pressure pad when its bar is nearly full | |
-| Five figures | Score 10,000 | Neon theme |
-| Deep diver | Score 25,000 | Paper theme |
-| Abyssal | Score 100,000 | |
-
-Sound and vibration can be switched off in the pause menu. Vibration uses the native haptics engine in the iOS app. Safari on iPhone doesn't allow web pages to vibrate, so the home-screen version has sound only.
+Sound and vibration can be switched off in the pause menu.
+Vibration uses the native haptics engine in the iOS app.
+Safari on iPhone doesn't allow web pages to vibrate, so the home-screen version has sound only.
 
 ## Run it on PC
 
@@ -87,43 +87,59 @@ In Xcode, set your signing team under **Signing & Capabilities**. To lock the ap
 www/                  the game (this folder is what gets deployed)
   index.html          page shell, menus, iOS/PWA meta tags
   css/style.css       menu styling
-  js/physics.js       soft-body engine: particle rings, shape matching, spatial hash
+  js/physics.js       soft-body engine: suba rings, skin and area springs, mass balls, contacts, merges
+  js/mode.js          classic rules: spawning, the bar, aiming, bumpers, score, save state
+  js/achievements.js  the 30 achievements
+  js/styles.js        the 28 colour themes (generated by tools/gen-styles.py)
+  js/render.js        camera and all canvas drawing
   js/audio.js         generated sound effects (WebAudio, no audio files)
-  js/game.js          slingshot input, merging, scoring, rendering, save/resume
+  js/game.js          app shell: menus, themes, save and resume, input, main loop
   sw.js               offline cache for the installed app
   manifest.webmanifest
   fonts/ icons/
+docs/
+  original-spec.md    the original game's rules and constants, with sources
+  rebuild-plan.md     how this version is built
+tests/
+  node/               headless rule and physics tests
+  e2e/                browser tests that play with real mouse and touch input
 tools/
   serve.js            zero-dependency dev server (npm start)
   build-single.js     one-file bundle (npm run build:single)
+  gen-styles.py       regenerates js/styles.js from the spec (npm run styles)
   make_icons.py       regenerates the icons (needs Pillow)
 capacitor.config.json native iOS wrapper settings
 .github/workflows/pages.yml  GitHub Pages deploy
 ```
 
+## Tests
+
+```sh
+npm test             # everything
+npm run test:node    # rules and physics, no browser
+npm run test:e2e     # browser tests (needs Playwright and Chromium)
+```
+
+See `tests/README.md` for what each test checks.
+
 ## How the physics works
 
-Like the original, each blob is a closed ring of small circular particles rather than one rigid circle. That is what makes the pile squish and wobble. Each frame runs 8 substeps:
+As in the original, each sobo is a ring of small circles called subas, 12 px in radius, 16 px apart.
+Every physics tick (60 per second, 4 substeps each):
 
-1. **Verlet integration** moves every particle under gravity with light damping.
-2. **A soft body** holds each ring together with three gentle forces:
-   - **Shape matching** pulls weakly toward the blob's best-fit rest circle, so it slowly recovers its shape.
-   - **Pressure** gently pushes the enclosed area back toward its rest size. It is deliberately weak, so a squashed blob gives a little volume and packs into the gaps around it with flat faces where it meets its neighbours.
-   - **Smoothing** keeps the outline free of lumps.
+1. **Gravity** of 150 px/s² and light damping move every suba.
+2. **Skin.** Each pair of neighbouring subas is joined by a spring that only pulls when stretched, so a ring can crumple but not tear.
+3. **Area pressure** pushes the ring back toward its rest area when squashed.
+4. **A hidden mass ball** at each sobo's centre carries most of its weight and is tied to the ring by a spring, which gives the slow, heavy wobble.
+5. **Contacts** between subas of different sobos, and with the walls and bumpers, are frictionless and do not bounce.
 
-   The result is jelly-like: blobs squash hard when they land, wobble back and forth before settling, sag into flat-bottomed shapes and mould into the gaps around them. Bigger blobs are softer.
-3. **Collisions** resolve particle-vs-particle contacts between different blobs (with friction) and particle contacts with the walls, the cut corners and the pressure-pad domes. A uniform spatial hash keeps this fast.
+Sobos on the bar are held up by a spring toward the bar line and nudged toward the middle.
+A merge builds the new ring from both old outlines and sends out a shockwave that kicks nearby sobos.
+The bumpers are springs that the pile can push 32 px into the wall.
 
-A few extra rules make it feel like jelly rather than rubber:
-
-- **Contact damping.** While touching something, a blob's rebound and spin are lightly damped, so shots land close to where they are aimed instead of bouncing and rolling away.
-- **Pressure pads.** Each pad is a circular dome that particles collide with. The physics adds up how far particles push into it each frame. The game caps that reading and smooths it over half a second, so one hard hit doesn't count. A pad pressed past its limit fills its bar on the lid, and the pad sinks a few pixels into the wall under load.
-- **Skin.** Neighbouring ring particles can't drift too far apart, so small blobs can't slip through a ring into a big one.
-- **Merge tolerance.** Equal blobs wedged a hair apart still merge, because they look like they're touching.
-- **Peanut start.** Merged blobs start from their two parents' outline and inflate into a circle. A safety pass separates any ring that does end up inside another.
-
-A crowded tank (about 600 particles) simulates in roughly 2 ms per frame on a laptop.
+A crowded field of about 500 subas simulates in roughly 3 ms per tick on a laptop.
 
 ## Credits
 
-Inspired by *sobosuba* by keepeetron. Soboscuba is an independent fan recreation with its own code and art. Fonts: Audiowide and Nunito (SIL Open Font License).
+Inspired by *sobosuba* by keepeetron. Soboscuba is an independent fan recreation with its own code.
+Fonts: souba score and souba text by keepee (CC0 public domain, see `www/fonts/SOUBA-FONTS.txt`), Audiowide and Nunito (SIL Open Font License).

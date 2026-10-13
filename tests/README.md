@@ -1,25 +1,37 @@
-# Browser tests
+# Tests
 
-Playwright scripts that drive the real game in Chromium. Start the dev server first:
+Run everything with `npm test`.
+Each test prints `ok` or `FAIL` per check and exits non-zero on any failure.
 
-```
-PORT=8099 node tools/serve.js      # every test loads http://localhost:8099/
-npm i -D playwright && npx playwright install chromium   # once
-mkdir -p out/play
-```
+## Headless (`tests/node`, `npm run test:node`)
 
-Run any script with an output folder for screenshots: `node tests/test.js out`.
+No browser needed.
+`harness.js` loads the game's rule and physics scripts into Node.
 
-| Script | Checks |
+| Test | Checks |
 |---|---|
-| test.js | Smoke test: play, drag-launch, resume, forced pad overload ends the game |
-| phys.js | Landing bounce/roll, tangles under 120 hard shots, escapes, NaN |
-| stress.js | Two 8192s merge, crowded tank, ms per physics step |
-| filetest.js | `www/index.html` and `dist/soboscuba.html` work straight from disk (run `npm run build:single` first) |
-| offline.js | Service worker offline reload |
-| rotate.js | Sideways phone pauses and shows the rotate prompt |
-| overlock.js | Game-over card ignores an instant tap |
-| layouts.js | iPad, iPad sideways, desktop, small phone (needs `out/play`) |
-| look.js | Screenshots of title, mid-game pile, aiming, desktop |
-| themes.js | Same pile rendered in each colour theme: `node tests/themes.js dark neon sunset` |
-| padcal.js | Pressure-pad calibration: pad pressure as a pile grows |
+| phys.js | A lone 1 settles to the size and shape the original reaches in Godot, big sobos rest still, a 40-sobo pile stays sane and fast, equal sobos merge |
+| mode.js | Spawning side and timing, the bar, launch and merge scoring, spawn pool unlocks, one merge per tick, bumper holding and the loss, save and restore, achievements, themes |
+
+## Browser (`tests/e2e`, `npm run test:e2e`)
+
+These start their own local server and drive Chromium with real mouse and touch input.
+Screenshots go to `out/e2e/` (or `$OUT`).
+
+Setup, once:
+
+```sh
+npm i --no-save playwright && npx playwright install chromium
+```
+
+Set `CHROMIUM_PATH` to use a specific Chromium binary.
+
+| Test | Checks |
+|---|---|
+| flows.js | Aim, right-click cancel, launch, pause, save and continue across a reload, the loss, the game over card and view board, theme unlocks, light mode |
+| play.js | Plays a game with touch on a phone and a mouse on a desktop window: drags launch, sobos merge, nothing escapes. `SHOTS=n` sets the length |
+| files.js | `www/index.html` and the single-file build play straight from disk with fonts loaded |
+| offline.js | After one visit the service worker serves the game and fonts offline |
+| rotate.js | A sideways phone pauses and shows the rotate prompt |
+| layouts.js | Phones, iPads, laptop, 4K and a narrow window all show the whole field with the HUD clear of it |
+| themes.js | The same board in all 28 colour themes, for a visual check |

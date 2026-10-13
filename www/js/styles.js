@@ -3,50 +3,6 @@
   'use strict';
   SB.STYLES = [
  {
-  "id": "dark",
-  "name": "dark",
-  "free": true,
-  "light": false,
-  "bg": "#040405",
-  "structure": "#26262c",
-  "oob": "#0d0d0f",
-  "recess": "#141417",
-  "fill": "#55555e",
-  "special": "#2fb8a8",
-  "danger": "#d6404a",
-  "marker": "#e8e8ee",
-  "label": "#f2f2f6",
-  "palette": [
-   "#9b2f3c",
-   "#a8622a",
-   "#8f7a1e",
-   "#3f7d3a",
-   "#1f716b",
-   "#27548f",
-   "#4d3c93",
-   "#7b3079",
-   "#9b3557",
-   "#5a5d6b",
-   "#b5852b",
-   "#2c8a76",
-   "#3b67b5",
-   "#a33c3c",
-   "#6b4fa8",
-   "#c9c9d1"
-  ],
-  "ui": [
-   "#8c8c96",
-   "#f2f2f6",
-   "#2a2a30",
-   "#141417",
-   "#26262c",
-   "#f2f2f6",
-   "#2c2c33",
-   "#c9c9d1",
-   "#202026"
-  ]
- },
- {
   "id": "dark_mode",
   "name": "dark mode",
   "free": true,
