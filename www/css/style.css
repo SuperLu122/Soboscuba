@@ -205,14 +205,17 @@ h2 {
   color: var(--mist);
 }
 .best span { color: var(--foam); font-family: 'Souba Score', var(--font-display); font-variant-numeric: tabular-nums; }
-.newbest { color: var(--hot); font-size: 1rem; margin-top: -8px; }
+.newbest { color: var(--coral); font-size: 1rem; margin-top: -8px; }
 
 .stats {
   margin: 0;
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
+/* The final score is the headline; best and biggest sit under it. */
+.stats div:first-child { grid-column: 1 / -1; padding: 14px 8px 16px; }
+.stats div:first-child dd { font-size: 2.6rem; }
 .stats div {
   padding: 10px 4px;
   border-radius: 16px;
@@ -234,7 +237,7 @@ h2 {
   font-family: 'Souba Score', var(--font-display);
   font-size: 1.45rem;
   font-variant-numeric: tabular-nums;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
 }
 
 /* Title secondary button and pill counter */

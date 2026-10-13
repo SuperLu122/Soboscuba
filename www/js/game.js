@@ -249,7 +249,7 @@
     if (s === 'title') {
       $('btn-continue').hidden = !store.get('game', null);
       $('btn-play').textContent = $('btn-continue').hidden ? 'Start game' : 'New game';
-      $('title-best').textContent = best.toLocaleString();
+      $('title-best').textContent = String(best);
       $('awards-count').textContent = achCount() + '/' + A_DEFS.length;
     }
     if (mode && s !== 'play') mode.cancelAim(true);
@@ -259,14 +259,23 @@
     setScreen('paused');
     save();
   }
+  // Shrinks a number until it fits its box, so long scores never wrap.
+  function setFit(el, text) {
+    if (el.textContent === text && el.dataset.fit) return;
+    el.textContent = text;
+    el.style.fontSize = '';
+    var avail = el.parentElement.clientWidth - 8, w = el.scrollWidth;
+    if (w > avail) el.style.fontSize = (parseFloat(getComputedStyle(el).fontSize) * avail / w) + 'px';
+    el.dataset.fit = '1';
+  }
   function showOver() {
     app.overScore = 0;
-    $('over-score').textContent = '0';
-    $('over-best').textContent = best.toLocaleString();
-    $('over-biggest').textContent = String(mode.biggest);
     $('over-newbest').hidden = !app.newBest || mode.score === 0;
-    R.whiteFlash = 1;
     setScreen('over');
+    setFit($('over-score'), '0');
+    setFit($('over-best'), String(best));
+    setFit($('over-biggest'), String(mode.biggest));
+    R.whiteFlash = 1;
   }
 
   function bind(id, fn) {
@@ -494,7 +503,7 @@
     if (app.screen === 'over') {
       app.overScore += (mode.score - app.overScore) * Math.min(1, 2 * dt);
       if (mode.score - app.overScore < 0.5) app.overScore = mode.score;
-      $('over-score').textContent = Math.round(app.overScore).toLocaleString();
+      setFit($('over-score'), String(Math.round(app.overScore)));
     }
     var inGame = app.screen !== 'title';
     R.draw(mode, st, {
