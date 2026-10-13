@@ -13,14 +13,15 @@
 
 :root {
   --abyss: #111111;
-  --sea: #1b1b1b;
+  --sea: #0d0d0f;
   --foam: #f2f2f2;
   --mist: #9a9a9a;
-  --coral: #33ffff;
-  --coral-deep: #13a3a3;
+  --coral: #b5852b;
+  --coral-deep: #76571c;
   --ink: #111111;
-  --glass: rgba(38, 38, 38, 0.94);
-  --hot: #ff7433;
+  --glass: #16161a;
+  --hot: #c43c3c;
+  --card-edge: #1f1f24;
   --font-display: 'Audiowide', 'Arial Black', 'Trebuchet MS', system-ui, sans-serif;
   --font-body: 'Nunito', ui-rounded, 'SF Pro Rounded', system-ui, -apple-system, 'Segoe UI', sans-serif;
   color-scheme: dark;
@@ -80,7 +81,7 @@ body { position: fixed; inset: 0; }
   padding: 26px 22px 22px;
   border-radius: 22px;
   background: var(--glass);
-  border: 6px solid #333333;
+  border: 6px solid var(--card-edge);
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
   -webkit-backdrop-filter: blur(10px);
   backdrop-filter: blur(10px);
@@ -310,7 +311,7 @@ h2 {
   cursor: pointer;
   touch-action: manipulation;
 }
-.style-opt[aria-checked="true"] { border-color: var(--coral); background: rgba(51, 255, 255, 0.1); }
+.style-opt[aria-checked="true"] { border-color: var(--coral); background: rgba(255, 255, 255, 0.08); }
 .style-opt:disabled { cursor: default; opacity: 0.55; }
 .style-opt:focus-visible { outline: 3px solid var(--mist); outline-offset: 2px; }
 .style-opt b { font-family: var(--font-display); font-weight: 400; font-size: 1.05rem; }

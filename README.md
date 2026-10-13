@@ -4,7 +4,7 @@ A recreation of [sobosuba](https://store.steampowered.com/app/1946560/sobosuba/)
 
 Pull back to fling squishy numbered sobos into a black tank. Two equal sobos that touch merge into the next number (1 + 1 = 2, 2 + 2 = 4 … up to 16k and beyond). A grey pressure pad bulges out of each side wall, a third of the way down. When the pile presses a pad too hard, that pad's bar on the tank lid fills up. Left alone, the bar slowly drains. A full bar ends the game. Merging makes room.
 
-The look follows the original: flat neon sobos with a blocky number font, a tank with cut bottom corners, the next sobos lined up beside the launcher, and (on a wide screen) the name and score standing on end either side of the tank.
+The look follows the original: flat sobos with a blocky number font, a tank with cut bottom corners, the next sobos lined up beside the launcher, and (on a wide screen) the name and score standing on end either side of the tank.
 
 ## How to play
 
@@ -23,24 +23,24 @@ The look follows the original: flat neon sobos with a blocky number font, a tank
 - The first game shows a short animated tutorial.
 - On a phone, play upright. Turning it sideways pauses the game until you turn it back.
 
-## Achievements and sobo styles
+## Achievements and colour themes
 
-Thirteen achievements, shown in a pop-up as you earn them. Four of them unlock new colour styles for the sobos, which you pick under **Achievements & styles** on the title screen or pause menu.
+Thirteen achievements, shown in a pop-up as you earn them. The default theme is **Dark**: a near-black tank with deep, rich sobo colours. Five achievements unlock extra colour themes, which you pick under **Awards & themes** on the title screen or pause menu.
 
 | Achievement | How to earn it | Unlocks |
 |---|---|---|
 | First squish | Merge two sobos | |
 | Getting chunky | Make a 128 | |
-| Big wobbler | Make a 512 | Pastel style |
-| Tank boss | Make a 2k | Midnight style |
+| Big wobbler | Make a 512 | Sunset theme |
+| Tank boss | Make a 2k | Ocean theme |
 | Leviathan | Make an 8k | |
 | Chain reaction | Combo ×3 | |
-| Cascade | Combo ×5 | Neon style |
+| Cascade | Combo ×5 | Candy theme |
 | Bullseye | Merge a sobo with the first sobo it touches | |
 | Bank shot | Bounce off a wall straight into a merge | |
 | Close call | Ease off a pressure pad when its bar is nearly full | |
-| Five figures | Score 10,000 | |
-| Deep diver | Score 25,000 | Sunset style |
+| Five figures | Score 10,000 | Neon theme |
+| Deep diver | Score 25,000 | Paper theme |
 | Abyssal | Score 100,000 | |
 
 Sound and vibration can be switched off in the pause menu. Vibration uses the native haptics engine in the iOS app. Safari on iPhone doesn't allow web pages to vibrate, so the home-screen version has sound only.

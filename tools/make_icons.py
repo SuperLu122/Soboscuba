@@ -13,8 +13,8 @@ def poly(cx, cy, rx, ry, n, rot=0.3):
 
 def icon(pad=0.0):
     # A black tank with cut bottom corners in a dark grey frame, a pressure
-    # pad on each wall and a few flat neon sobos packed inside.
-    img = Image.new('RGB', (S, S), (27, 27, 27))
+    # pad on each wall and a few flat sobos packed inside.
+    img = Image.new('RGB', (S, S), (13, 13, 15))
     d = ImageDraw.Draw(img)
     k = 1 - pad * 2
     o = S * (1 - k) / 2
@@ -27,19 +27,19 @@ def icon(pad=0.0):
     outer = [P(L - frame, T - frame), P(R + frame, T - frame), P(R + frame, F - C + 19), P(R - C + 19, F + frame),
              P(L + C - 19, F + frame), P(L - frame, F - C + 19)]
     inner = [P(L, T), P(R, T), P(R, F - C), P(R - C, F), P(L + C, F), P(L, F - C)]
-    d.polygon(outer, fill=(51, 51, 51))
-    d.polygon(inner, fill=(0, 0, 0))
+    d.polygon(outer, fill=(31, 31, 36))
+    d.polygon(inner, fill=(4, 4, 5))
     mask = Image.new('L', (S, S), 0)
     ImageDraw.Draw(mask).polygon(inner, fill=255)
-    layer = Image.new('RGB', (S, S), (0, 0, 0))
+    layer = Image.new('RGB', (S, S), (4, 4, 5))
     ld = ImageDraw.Draw(layer)
     for x in (L - 70, R + 70):
-        ld.ellipse([P(x - 140, 300), P(x + 140, 580)], fill=(102, 102, 102))
-    for cx, cy, rx, ry, n, col in ((520, 760, 250, 170, 22, (51, 255, 255)),
-                                   (280, 640, 125, 150, 14, (255, 116, 51)),
-                                   (760, 620, 115, 135, 14, (255, 52, 180)),
-                                   (500, 470, 105, 95, 12, (217, 255, 51)),
-                                   (330, 335, 62, 60, 9, (255, 46, 46))):
+        ld.ellipse([P(x - 140, 300), P(x + 140, 580)], fill=(63, 63, 71))
+    for cx, cy, rx, ry, n, col in ((520, 760, 250, 170, 22, (181, 133, 43)),
+                                   (280, 640, 125, 150, 14, (123, 48, 121)),
+                                   (760, 620, 115, 135, 14, (77, 60, 147)),
+                                   (500, 470, 105, 95, 12, (155, 53, 87)),
+                                   (330, 335, 62, 60, 9, (31, 113, 107))):
         ld.polygon([P(x, y) for x, y in poly(cx, cy, rx, ry, n)], fill=col)
     img.paste(layer, (0, 0), mask)
     return img

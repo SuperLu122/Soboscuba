@@ -21,42 +21,92 @@
   var COOLDOWN = 0.45;
   var DEAD_ZONE = 5;       // world px of drag treated as a tap
 
-  /* ---------- blob styles (colors[level], value = 2^level, level 0 is a 1) ---------- */
+  /* ---------- colour themes ----------
+   * Each theme colours the whole game: the sobos (colors[level], value =
+   * 2^level, level 0 is a 1), the tank and its pads, the HUD and the menus. */
   var STYLES = {
-    classic: { name: 'Classic', colors: ['#ff2e2e', '#ffe62e', '#5cff2e', '#2effbf', '#2e8bff', '#9b30ff',
-      '#ff34b4', '#ff7433', '#d9ff33', '#f2f2f2', '#33ffff', '#ffc233', '#7a5cff', '#ff5c33', '#33ff88', '#ff33ff'] },
-    ocean: { name: 'Ocean', unlock: 'v512', colors: ['#d8f6ff', '#9be7ff', '#5fd3c6', '#ffd166', '#ff9f5a', '#ff6b81',
-      '#c77dff', '#7b8cff', '#4ade80', '#ff5d5d', '#f472b6', '#fbbf24', '#22d3ee', '#a3e635', '#e879f9', '#f8fafc'] },
-    pastel: { name: 'Pastel', unlock: 'combo5', colors: ['#f0f0ff', '#d4f1ff', '#b8f0e0', '#fff1b8', '#ffd6b8',
-      '#ffc2d1', '#e3c8ff', '#c9d1ff', '#c6f6c6', '#ffb3b3', '#ffc8e8', '#ffe2a8', '#b5f1ff', '#e0f7a8', '#f6c8ff', '#ffffff'] },
-    sunset: { name: 'Sunset', unlock: 's25k', colors: ['#fffbe0', '#fff3b0', '#ffe08a', '#ffc86b', '#ffab5c',
-      '#ff8f5a', '#ff6f61', '#f0567a', '#d94892', '#b23fa6', '#8e44ad', '#6c4ab6', '#4f5bd5', '#3b7dd8', '#2ea0d6', '#ffffff'] },
-    midnight: { name: 'Midnight', unlock: 'v2048', colors: ['#e4eeff', '#c4d8ff', '#a6c1ff', '#8aa9f7', '#7392ea',
-      '#5f7ddb', '#4f6acb', '#4258b9', '#374aa6', '#2d3c92', '#25317e', '#1e286b', '#ffd166', '#ff9f5a', '#ff6b81', '#ffffff'] }
+    dark: { name: 'Dark',
+      colors: ['#9b2f3c', '#a8622a', '#8f7a1e', '#3f7d3a', '#1f716b', '#27548f', '#4d3c93', '#7b3079',
+        '#9b3557', '#5a5d6b', '#b5852b', '#2c8a76', '#3b67b5', '#a33c3c', '#6b4fa8', '#c9c9d1'],
+      ui: { bg: '#0d0d0f', tank: '#040405', frame: '#1f1f24', slot: '#08080a', pin: '#55555e',
+        track: '#141417', meter: '#6e6e78', padOuter: '#26262c', padInner: '#3f3f47', hot: '#c43c3c',
+        hud: '#55555e', hudDim: '#35353c', side: '#1c1c21', dot: '#d8d8de', dotDim: '#3a3a42',
+        accent: '#d8d8de', ink: '#0d0d0f', inkLight: '#ececf0', card: '#16161a', button: '#b5852b' } },
+    neon: { name: 'Neon',
+      colors: ['#ff2e2e', '#ffe62e', '#5cff2e', '#2effbf', '#2e8bff', '#9b30ff', '#ff34b4', '#ff7433',
+        '#d9ff33', '#f2f2f2', '#33ffff', '#ffc233', '#7a5cff', '#ff5c33', '#33ff88', '#ff33ff'],
+      ui: { bg: '#1b1b1b', tank: '#000000', frame: '#333333', slot: '#151515', pin: '#7a7a7a',
+        track: '#1c1c1c', meter: '#8c8c8c', padOuter: '#3c3c3c', padInner: '#686868', hot: '#ff3b3b',
+        hud: '#6e6e6e', hudDim: '#4a4a4a', side: '#333333', dot: '#ffffff', dotDim: '#5a5a5a',
+        accent: '#ffffff', ink: '#111111', inkLight: '#f2f2f2', card: '#262626', button: '#33ffff' } },
+    sunset: { name: 'Sunset',
+      colors: ['#ffe066', '#ffc145', '#ff9f43', '#ff7a5c', '#f2547d', '#d6449f', '#a94bc2', '#7b5bd9',
+        '#5170e6', '#3d93e8', '#2fb8d8', '#2fd6b0', '#7ee08a', '#c6ec6a', '#fff3b0', '#ffffff'],
+      ui: { bg: '#24142a', tank: '#130a17', frame: '#3d2541', slot: '#120914', pin: '#a07aa0',
+        track: '#1a0e1d', meter: '#c9a3c4', padOuter: '#4e3352', padInner: '#7d5a80', hot: '#ff4d6d',
+        hud: '#9a7c9c', hudDim: '#634a66', side: '#3a2540', dot: '#ffe9d6', dotDim: '#6b4f6e',
+        accent: '#ffe9d6', ink: '#1d0f20', inkLight: '#fff4ea', card: '#2e1b34', button: '#ffb84d' } },
+    candy: { name: 'Candy',
+      colors: ['#ff8fab', '#ffb38a', '#ffd970', '#c8f07a', '#7de8b0', '#6fd8f0', '#8fb0ff', '#b79cff',
+        '#e59cff', '#ff9ce0', '#fff1a8', '#a8fff0', '#ffc4c4', '#d4ffa8', '#ffffff', '#ffffff'],
+      ui: { bg: '#191733', tank: '#0f0d24', frame: '#2f2b58', slot: '#0d0b1f', pin: '#8f88d6',
+        track: '#141130', meter: '#b8b2ff', padOuter: '#3d3873', padInner: '#6a63b3', hot: '#ff5c8a',
+        hud: '#8f88d6', hudDim: '#57519a', side: '#2c2855', dot: '#ffffff', dotDim: '#5a548f',
+        accent: '#ffffff', ink: '#221d45', inkLight: '#ffffff', card: '#221f45', button: '#ff8fb8' } },
+    paper: { name: 'Paper',
+      colors: ['#e76f51', '#f4a261', '#e9c46a', '#8ab17d', '#2a9d8f', '#457b9d', '#6d6a9c', '#b56576',
+        '#e56b6f', '#6d597a', '#264653', '#bc6c25', '#606c38', '#9d0208', '#3d3428', '#3d3428'],
+      ui: { bg: '#efe5d5', tank: '#fbf7f0', frame: '#cbb89c', slot: '#a8957a', pin: '#efe5d5',
+        track: '#ddd0bb', meter: '#8c7b63', padOuter: '#bba98e', padInner: '#d9cab2', hot: '#d1495b',
+        hud: '#8c7b63', hudDim: '#b3a189', side: '#ddd0bb', dot: '#3d3428', dotDim: '#c2b197',
+        accent: '#3d3428', ink: '#2b241b', inkLight: '#fbf7f0', card: '#3d3428', button: '#e76f51' } },
+    ocean: { name: 'Ocean',
+      colors: ['#ffd166', '#ff9f5a', '#ff6b81', '#f472b6', '#c77dff', '#7b8cff', '#4cc9f0', '#5fd3c6',
+        '#4ade80', '#a3e635', '#fbbf24', '#ff5d5d', '#e879f9', '#22d3ee', '#f8fafc', '#ffffff'],
+      ui: { bg: '#08263a', tank: '#041a2a', frame: '#164260', slot: '#03131f', pin: '#7fb8d6',
+        track: '#062033', meter: '#9fd8f0', padOuter: '#1f5577', padInner: '#3f86ad', hot: '#ff5d5d',
+        hud: '#6aa3c3', hudDim: '#2f6283', side: '#123a55', dot: '#e9fbff', dotDim: '#2f6283',
+        accent: '#e9fbff', ink: '#06233a', inkLight: '#e9fbff', card: '#0c3047', button: '#ff9f5a' } }
   };
-  var STYLE_ORDER = ['classic', 'ocean', 'pastel', 'sunset', 'midnight'];
-  var INK = '#111111';
+  var STYLE_ORDER = ['dark', 'neon', 'sunset', 'candy', 'paper', 'ocean'];
+  var DEFAULT_STYLE = 'dark';
+  STYLES.neon.unlock = 's10k'; STYLES.sunset.unlock = 'v512'; STYLES.candy.unlock = 'combo5'; STYLES.paper.unlock = 's25k'; STYLES.ocean.unlock = 'v2048';
 
   function hexRgb(h) {
     var n = parseInt(h.slice(1), 16);
     return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
   }
   function mix(a, b, t) {
-    var x = hexRgb(a), y = hexRgb(b);
-    return 'rgb(' + Math.round(x[0] + (y[0] - x[0]) * t) + ',' +
-      Math.round(x[1] + (y[1] - x[1]) * t) + ',' + Math.round(x[2] + (y[2] - x[2]) * t) + ')';
+    var x = hexRgb(a), y = hexRgb(b), out = '#';
+    for (var i = 0; i < 3; i++) out += (256 + Math.round(x[i] + (y[i] - x[i]) * t)).toString(16).slice(1);
+    return out;
   }
   function luma(h) { var c = hexRgb(h); return (0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]) / 255; }
-  var LV = [];
+  var LV = [], UI = STYLES[DEFAULT_STYLE].ui;
   function applyStyle(id) {
-    var st = STYLES[id] || STYLES.classic;
+    var st = STYLES[id] || STYLES[DEFAULT_STYLE];
+    UI = st.ui;
     for (var l = 0; l <= 24; l++) {
       var base = st.colors[Math.min(l, st.colors.length - 1)];
+      var darkFill = luma(base) < 0.42;
       // Sobos fresh from the launcher wear a deep shade of their own colour
-      // on their number; sobos made by a merge wear black.
+      // on their number; sobos made by a merge wear the theme's ink.
       LV[l] = { fill: base, light: mix(base, '#ffffff', 0.35),
-        dark: luma(base) < 0.45 ? mix(base, '#ffffff', 0.6) : mix(base, '#000000', 0.55) };
+        dark: darkFill ? mix(base, '#ffffff', 0.6) : mix(base, '#000000', 0.55),
+        ink: darkFill ? UI.inkLight : UI.ink };
     }
+    // Menus follow the theme too.
+    var root = document.documentElement.style;
+    root.setProperty('--sea', UI.bg);
+    root.setProperty('--glass', UI.card);
+    root.setProperty('--card-edge', UI.frame);
+    root.setProperty('--coral', UI.button);
+    root.setProperty('--coral-deep', mix(UI.button, '#000000', 0.35));
+    root.setProperty('--hot', UI.hot);
+    var logo = document.querySelectorAll('#logo span');
+    for (var k = 0; k < logo.length; k++) logo[k].style.setProperty('--c', st.colors[[0, 1, 2, 3, 4, 5, 6, 7, 10][k] || 0]);
+    var meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', UI.bg);
   }
   function lv(level) { return LV[Math.min(level, LV.length - 1)]; }
   function label(v) { return v >= 16384 ? (v / 1024) + 'k' : String(v); }
@@ -92,7 +142,7 @@
     newBest: false,
     dangerPeak: 0,
     tutorial: false,
-    style: store.get('style', 'classic')
+    style: store.get('style', DEFAULT_STYLE)
   };
   Audio.setMuted(store.get('muted', false));
   var hapticsOn = store.get('haptics', true);
@@ -116,7 +166,7 @@
   var awards = store.get('awards', {});
   var toastQueue = [], toastBusy = false;
   function styleUnlocked(id) { var u = STYLES[id].unlock; return !u || !!awards[u]; }
-  if (!STYLES[S.style] || !styleUnlocked(S.style)) S.style = 'classic';
+  if (!STYLES[S.style] || !styleUnlocked(S.style)) S.style = DEFAULT_STYLE;
   applyStyle(S.style);
 
   function unlock(id) {
@@ -126,7 +176,7 @@
     var a = ACHIEVEMENTS.filter(function (x) { return x.id === id; })[0];
     var styleName = null;
     STYLE_ORDER.forEach(function (k) { if (STYLES[k].unlock === id) styleName = STYLES[k].name; });
-    toastQueue.push({ name: a.name, desc: a.desc, extra: styleName ? 'New sobo style: ' + styleName : '' });
+    toastQueue.push({ name: a.name, desc: a.desc, extra: styleName ? 'New colour theme: ' + styleName : '' });
     showToast();
   }
   function showToast() {
@@ -615,7 +665,7 @@
   }
 
   /* ---------- rendering ---------- */
-  var BG = '#1b1b1b', FRAME = '#333333', FT = 13;   // FT: frame thickness
+  var FT = 13;   // frame thickness
 
   function render() {
     var dpr = view.dpr;
@@ -628,7 +678,7 @@
     ctx.setTransform(s, 0, 0, s, (view.ox + sx) * dpr, (view.oy + sy) * dpr);
 
     tankPath(0);
-    ctx.fillStyle = '#000000';
+    ctx.fillStyle = UI.tank;
     ctx.fill();
     ctx.save();
     ctx.clip();   // splashes stay inside the tank
@@ -647,13 +697,13 @@
    * held sideways) the name and score stand on end beside it. */
   function drawBackground() {
     var w = canvas.width, h = canvas.height, dpr = view.dpr;
-    ctx.fillStyle = BG;
+    ctx.fillStyle = UI.bg;
     ctx.fillRect(0, 0, w, h);
     if (!sideText()) return;
     var cy = (view.oy + (CFG.ceil + CFG.floor) / 2 * view.scale) * dpr;
     var room = view.ox * dpr;
     var span = (CFG.floor - CFG.ceil) * view.scale * dpr;
-    ctx.fillStyle = '#333333';
+    ctx.fillStyle = UI.side;
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'center';
     ctx.save();
@@ -701,17 +751,17 @@
     tankPath(FT / 2);
     ctx.lineJoin = 'round';
     ctx.lineWidth = FT;
-    ctx.strokeStyle = FRAME;
+    ctx.strokeStyle = UI.frame;
     ctx.stroke();
     ctx.restore();
 
     // A slot in each wall behind its pad, with the pad's pin in it.
     for (var side = 0; side < 2; side++) {
       var x = side ? CFG.wallR + FT * 0.45 : CFG.wallL - FT * 0.45;
-      ctx.fillStyle = '#151515';
+      ctx.fillStyle = UI.slot;
       roundRect(x - 2.5, CFG.padY - CFG.padR * 1.15, 5, CFG.padR * 2.3, 2.5);
       ctx.fill();
-      ctx.fillStyle = '#7a7a7a';
+      ctx.fillStyle = UI.pin;
       ctx.beginPath(); ctx.arc(x, CFG.padY, 2.6, 0, Math.PI * 2); ctx.fill();
     }
     drawMeters();
@@ -731,12 +781,12 @@
     for (var side = 0; side < 2; side++) {
       var m = Math.min(1, S.meter[side]);
       var x0 = side ? CFG.wallR - len : CFG.wallL;
-      ctx.fillStyle = '#1c1c1c';
+      ctx.fillStyle = UI.track;
       roundRect(x0, y, len, 5, 2.5);
       ctx.fill();
       if (m <= 0.005) continue;
-      var col = mix('#8c8c8c', '#ff3b3b', Math.min(1, m * m * 1.6));
-      if (m > 0.7 && S.pad[side] >= PAD_LIMIT) col = mix(col, '#ffffff', flash * 0.35);
+      var col = mix(UI.meter, UI.hot, Math.min(1, m * m * 1.6));
+      if (m > 0.7 && S.pad[side] >= PAD_LIMIT) col = mix(col, UI.accent, flash * 0.35);
       ctx.fillStyle = col;
       var w = Math.max(5, len * m);
       roundRect(side ? CFG.wallR - w : CFG.wallL, y, w, 5, 2.5);
@@ -754,9 +804,9 @@
       var sink = world.padSink[side];
       var cx = side ? CFG.wallR + CFG.padIn + sink : CFG.wallL - CFG.padIn - sink;
       var m = Math.min(1, S.meter[side]);
-      ctx.fillStyle = mix('#3c3c3c', '#5a1a1a', m);
+      ctx.fillStyle = mix(UI.padOuter, mix(UI.hot, UI.padOuter, 0.55), m);
       ctx.beginPath(); ctx.arc(cx, CFG.padY, CFG.padR, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = mix('#686868', '#ff4a4a', Math.pow(m, 1.4));
+      ctx.fillStyle = mix(UI.padInner, UI.hot, Math.pow(m, 1.4));
       ctx.beginPath(); ctx.arc(cx + (side ? 3 : -3), CFG.padY, CFG.padR - 5, 0, Math.PI * 2); ctx.fill();
     }
     ctx.restore();
@@ -775,7 +825,7 @@
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.font = '14px ' + FONT;
-    ctx.fillStyle = mix('#ff8080', '#ff2e2e', alarm);
+    ctx.fillStyle = mix(mix(UI.hot, '#ffffff', 0.45), UI.hot, alarm);
     ctx.fillText('TOO MUCH PRESSURE', cx, cy + 1);
   }
 
@@ -807,7 +857,7 @@
     ctx.font = fs + 'px ' + FONT;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillStyle = made ? INK : lv(level).dark;
+    ctx.fillStyle = made ? lv(level).ink : lv(level).dark;
     ctx.fillText(txt, cx, cy + fs * 0.06);
   }
 
@@ -829,7 +879,7 @@
     ctx.lineJoin = 'round';
     if (selected) {
       ctx.lineWidth = 7;
-      ctx.strokeStyle = '#ffffff';
+      ctx.strokeStyle = UI.accent;
       ctx.stroke();
     }
     ctx.fillStyle = lv(level).fill;
@@ -864,7 +914,7 @@
       var nx = q + 1 < xs.length ? xs[q + 1] : xs[q] + rs[q] * 2 + 1;
       var dx = xs[q] + (nx - xs[q]) * e;
       if (dx - rs[q] > CFG.wallR - 2) continue;
-      ctx.fillStyle = q === 0 ? '#ffffff' : '#5a5a5a';
+      ctx.fillStyle = q === 0 ? UI.dot : UI.dotDim;
       ctx.beginPath(); ctx.arc(q === 0 && ready ? p.x : dx, CFG.ceil + 4, q === 0 ? 3.5 : 2.6, 0, Math.PI * 2); ctx.fill();
       if (q === 0 && ready) continue;
       drawStaticBlob(vals[q], dx, CFG.launchY, rs[q], 1, 1, 0, false);
@@ -878,7 +928,7 @@
     drawStaticBlob(S.cur, p.x, p.y, rs[0] * wob * pop, 1 + st * 0.22, 1 - st * 0.14, ang, true);
     if (drag && len >= DEAD_ZONE) drawAim(p, pull);
     if (drag) {
-      ctx.fillStyle = '#ffffff';
+      ctx.fillStyle = UI.accent;
       ctx.beginPath(); ctx.arc(p.x, p.y, 7, 0, Math.PI * 2); ctx.fill();
     }
   }
@@ -887,7 +937,7 @@
     var len = Math.hypot(pull.x, pull.y), ux = pull.x / len, uy = pull.y / len;
     var L = 30 + (len / MAX_PULL) * 150;
     var ex = p.x + ux * L, ey = p.y + uy * L;
-    ctx.strokeStyle = '#ffffff';
+    ctx.strokeStyle = UI.accent;
     ctx.lineWidth = 3.5;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
@@ -915,25 +965,27 @@
     var fade = cyc > 0.85 ? 1 - (cyc - 0.85) / 0.15 : Math.min(1, cyc / 0.1);
     ctx.globalAlpha = fade;
     ctx.setLineDash([5, 6]);
-    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+    ctx.strokeStyle = UI.accent;
+    ctx.globalAlpha = fade * 0.5;
     ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(fx2, fy); ctx.stroke();
     ctx.setLineDash([]);
-    ctx.fillStyle = 'rgba(255,255,255,0.25)';
+    ctx.globalAlpha = fade * 0.25;
+    ctx.fillStyle = UI.accent;
     ctx.beginPath(); ctx.arc(fx2, fy, 18, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = '#ffffff';
+    ctx.globalAlpha = fade;
     ctx.lineWidth = 2.5;
     ctx.beginPath(); ctx.arc(fx2, fy, 18, 0, Math.PI * 2); ctx.stroke();
     ctx.globalAlpha = 1;
 
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = UI.accent;
     ctx.font = '17px ' + FONT;
     ctx.fillText('Drag back like a slingshot', CFG.W / 2, 430);
     ctx.fillText('and let go to fling', CFG.W / 2, 454);
     ctx.font = '12px ' + FONT;
-    ctx.fillStyle = '#8c8c8c';
+    ctx.fillStyle = UI.hud;
     ctx.fillText('Tap anywhere for a gentle drop', CFG.W / 2, 486);
   }
 
@@ -974,15 +1026,15 @@
   function drawHud() {
     if (S.mode === 'title') return;
     // Menu button: three bars, as in the original.
-    ctx.fillStyle = '#5a5a5a';
+    ctx.fillStyle = UI.hud;
     for (var i = -1; i <= 1; i++) roundRect(PAUSE_BTN.x - 13, PAUSE_BTN.y + i * 8 - 2.5, 26, 5, 2.5), ctx.fill();
     if (sideText()) return;
     ctx.textAlign = 'right';
     ctx.textBaseline = 'alphabetic';
-    ctx.fillStyle = '#4a4a4a';
+    ctx.fillStyle = UI.hudDim;
     ctx.font = '11px ' + FONT;
     ctx.fillText('BEST ' + S.best.toLocaleString(), CFG.wallR, 30);
-    ctx.fillStyle = '#6e6e6e';
+    ctx.fillStyle = UI.hud;
     ctx.font = '38px ' + FONT;
     ctx.fillText(S.score.toLocaleString(), CFG.wallR + 2, 80);
   }
