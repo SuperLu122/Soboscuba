@@ -1,45 +1,47 @@
 """Generate the Soboscuba app icons (run: python3 tools/make_icons.py)."""
 import os
-from PIL import Image, ImageDraw, ImageFilter
+import math
+from PIL import Image, ImageDraw
 
 OUT = os.path.join(os.path.dirname(__file__), '..', 'www', 'icons')
 S = 1024
 
 
+def poly(cx, cy, rx, ry, n, rot=0.3):
+    return [(cx + math.cos(rot + a * 2 * math.pi / n) * rx, cy + math.sin(rot + a * 2 * math.pi / n) * ry) for a in range(n)]
+
+
 def icon(pad=0.0):
-    img = Image.new('RGB', (S, S))
+    # A black tank with cut bottom corners in a dark grey frame, a pressure
+    # pad on each wall and a few flat neon sobos packed inside.
+    img = Image.new('RGB', (S, S), (27, 27, 27))
     d = ImageDraw.Draw(img)
-    top, bot = (17, 104, 138), (3, 17, 31)
-    for y in range(S):
-        t = y / (S - 1)
-        d.line([(0, y), (S, y)], fill=tuple(int(top[i] + (bot[i] - top[i]) * t) for i in range(3)))
     k = 1 - pad * 2
-    cx, cy = S / 2, S / 2 + 30 * k
+    o = S * (1 - k) / 2
 
-    def blob(x, y, rx, ry, fill, edge):
-        d.ellipse([x - rx, y - ry, x + rx, y + ry], fill=edge)
-        e = 18 * k
-        d.ellipse([x - rx + e, y - ry + e, x + rx - e, y + ry - e], fill=fill)
+    def P(x, y):
+        return (o + x * k, o + y * k)
 
-    # small teal blob behind, big coral-gold blob in front
-    blob(cx + 250 * k, cy + 215 * k, 150 * k, 130 * k, (95, 211, 198), (40, 110, 110))
-    blob(cx - 40 * k, cy, 340 * k, 300 * k, (255, 209, 102), (140, 100, 40))
-    # gloss
-    gl = Image.new('L', (S, S), 0)
-    ImageDraw.Draw(gl).ellipse([cx - 260 * k, cy - 200 * k, cx - 120 * k, cy - 135 * k], fill=110)
-    gl = gl.filter(ImageFilter.GaussianBlur(6))
-    img.paste((255, 255, 255), (0, 0), gl)
-    # eyes
-    ink = (11, 34, 57)
-    for ex in (-130, 70):
-        x, y, r = cx + ex * k, cy - 40 * k, 34 * k
-        d.ellipse([x - r, y - r, x + r, y + r], fill=ink)
-        d.ellipse([x - r * 0.1, y - r * 0.75, x + r * 0.55, y - r * 0.1], fill=(255, 255, 255))
-    # smile
-    d.arc([cx - 100 * k, cy + 10 * k, cx + 40 * k, cy + 110 * k], 20, 160, fill=ink, width=int(16 * k))
-    # bubbles
-    for bx, by, br in ((780, 210, 34), (850, 330, 20), (720, 120, 16)):
-        d.ellipse([bx - br, by - br, bx + br, by + br], outline=(220, 245, 255), width=7)
+    L, R, T, F, C = 170, 854, 150, 900, 150
+    frame = 46
+    outer = [P(L - frame, T - frame), P(R + frame, T - frame), P(R + frame, F - C + 19), P(R - C + 19, F + frame),
+             P(L + C - 19, F + frame), P(L - frame, F - C + 19)]
+    inner = [P(L, T), P(R, T), P(R, F - C), P(R - C, F), P(L + C, F), P(L, F - C)]
+    d.polygon(outer, fill=(51, 51, 51))
+    d.polygon(inner, fill=(0, 0, 0))
+    mask = Image.new('L', (S, S), 0)
+    ImageDraw.Draw(mask).polygon(inner, fill=255)
+    layer = Image.new('RGB', (S, S), (0, 0, 0))
+    ld = ImageDraw.Draw(layer)
+    for x in (L - 70, R + 70):
+        ld.ellipse([P(x - 140, 300), P(x + 140, 580)], fill=(102, 102, 102))
+    for cx, cy, rx, ry, n, col in ((520, 760, 250, 170, 22, (51, 255, 255)),
+                                   (280, 640, 125, 150, 14, (255, 116, 51)),
+                                   (760, 620, 115, 135, 14, (255, 52, 180)),
+                                   (500, 470, 105, 95, 12, (217, 255, 51)),
+                                   (330, 335, 62, 60, 9, (255, 46, 46))):
+        ld.polygon([P(x, y) for x, y in poly(cx, cy, rx, ry, n)], fill=col)
+    img.paste(layer, (0, 0), mask)
     return img
 
 

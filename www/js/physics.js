@@ -18,24 +18,27 @@
   var CS = PD;           // spatial hash cell size
 
   var CFG = SB.CONFIG = {
-    W: 420, H: 760,
-    wallL: 16, wallR: 404, floor: 736, ceil: 4,
-    dangerY: 176,          // top of the play area (launch zone above)
-    padTop: 520, padBot: 720,   // pressure pads low on both side walls
-    launchX: 210, launchY: 100,
+    W: 420, H: 620,
+    wallL: 22, wallR: 398, floor: 596, ceil: 112,
+    chamfer: 46,           // the tank's bottom corners are cut at 45 degrees
+    dangerY: 214,          // bottom of the launch zone at the top of the tank
+    padY: 270,             // pressure pads: domes on both side walls
+    padR: 40,              // dome radius
+    padIn: 21,             // dome centre sits this far inside the wall
+    launchX: 210, launchY: 166,
     gravity: 1500,
     substeps: 8,
     viscosity: 0.004,
     reboundDamp: 0.03,
     spinDamp: 0.04,
     mergeSlop: 5,
-    shapeStiff: 0.008,    // pull toward the rest circle per substep (low = squishy)
-    pressure: 0.6,        // how hard each blob keeps its volume
+    shapeStiff: 0.0025,   // pull toward the rest circle per substep (low = squishy)
+    pressure: 0.08,       // how hard each blob keeps its volume (low = packs into gaps)
     smooth: 0.035,        // pulls each skin particle toward its neighbours' midpoint
     dt: 1 / 60
   };
 
-  function radiusFor(level) { return 17 + 8.2 * (level - 1); }
+  function radiusFor(level) { return 14 + 6 * level; }   // level 0 is a 1
   SB.radiusFor = radiusFor;
   SB.PR = PR;
 
@@ -91,7 +94,7 @@
     this.impact = 0;      // strongest blob/blob impact this frame (for sfx)
     this.padL = 0;        // how hard the pile pushes each side pad this frame
     this.padR = 0;
-    this.wallPush = new Float32Array(Math.ceil(CFG.H / 40) * 2);   // per 40px band, L then R
+    this.padSink = [0, 0]; // how far each pad has been pushed into its wall (set by the game)
   }
   SB.World = World;
 
@@ -188,7 +191,6 @@
     this.contactKeys = {};
     this.impact = 0;
     this.padL = 0; this.padR = 0;
-    this.wallPush.fill(0);
 
     for (i = 0; i < this.blobs.length; i++) {
       b = this.blobs[i];
@@ -500,25 +502,50 @@
     var L = CFG.wallL + PR, Rr = CFG.wallR - PR;
     var F = CFG.floor - PR, T = CFG.ceil + PR;
     var wf = 0.25, owner = this.owner, blobs = this.blobs;
-    var pt = CFG.padTop, pb = CFG.padBot, nb = this.wallPush.length / 2;
+    var C = CFG.chamfer - PR * (2 - Math.SQRT2), S2 = Math.SQRT1_2;
+    // Pressure pads: circles centred just inside each wall.
+    var py = CFG.padY, pr = CFG.padR + PR;
+    var plx = CFG.wallL - CFG.padIn - this.padSink[0], prx = CFG.wallR + CFG.padIn + this.padSink[1];
     for (var k = 0; k < this.count; k++) {
-      var hit = 0;
-      if (X[k] < L) {
-        if (Y[k] > pt && Y[k] < pb) this.padL += L - X[k];
-        if (Y[k] > 0) this.wallPush[(Y[k] / 40) | 0] += L - X[k];
-        X[k] = L; PY[k] += (Y[k] - PY[k]) * wf; hit = 1;
-      } else if (X[k] > Rr) {
-        if (Y[k] > pt && Y[k] < pb) this.padR += X[k] - Rr;
-        if (Y[k] > 0) this.wallPush[nb + ((Y[k] / 40) | 0)] += X[k] - Rr;
-        X[k] = Rr; PY[k] += (Y[k] - PY[k]) * wf; hit = 1;
-      }
+      var hit = 0, dx, dy, d2, d, pen;
+      if (X[k] < L) { X[k] = L; PY[k] += (Y[k] - PY[k]) * wf; hit = 1; }
+      else if (X[k] > Rr) { X[k] = Rr; PY[k] += (Y[k] - PY[k]) * wf; hit = 1; }
       if (Y[k] > F) { Y[k] = F; PX[k] += (X[k] - PX[k]) * wf; hit = 2; }
       else if (Y[k] < T) { Y[k] = T; hit = 2; }
+
+      // Cut corners: push back across the 45 degree edge.
+      pen = C - ((X[k] - L) + (F - Y[k]));
+      if (pen > 0) { pen *= 0.5; X[k] += pen; Y[k] -= pen; slide(k, S2, -S2); hit = 2; }
+      pen = C - ((Rr - X[k]) + (F - Y[k]));
+      if (pen > 0) { pen *= 0.5; X[k] -= pen; Y[k] -= pen; slide(k, -S2, -S2); hit = 2; }
+
+      dy = Y[k] - py;
+      if (dy > -pr && dy < pr) {
+        dx = X[k] - plx; d2 = dx * dx + dy * dy;
+        if (d2 < pr * pr) {
+          d = Math.sqrt(d2) || 1; pen = pr - d;
+          this.padL += pen;
+          X[k] += dx / d * pen; Y[k] += dy / d * pen; slide(k, dx / d, dy / d); hit = 1;
+        }
+        dx = X[k] - prx; d2 = dx * dx + dy * dy;
+        if (d2 < pr * pr) {
+          d = Math.sqrt(d2) || 1; pen = pr - d;
+          this.padR += pen;
+          X[k] += dx / d * pen; Y[k] += dy / d * pen; slide(k, dx / d, dy / d); hit = 1;
+        }
+      }
       if (hit) {
         var hb = blobs[owner[k]];
         hb.touch = true;
         if (hb.track) { if (hit === 1) hb.sideHit = true; else hb.floorHit = true; }
       }
+    }
+    // Friction along a slanted or curved surface with normal (nx, ny).
+    function slide(k, nx, ny) {
+      var vx = X[k] - PX[k], vy = Y[k] - PY[k];
+      var vn = vx * nx + vy * ny;
+      PX[k] += (vx - vn * nx) * wf;
+      PY[k] += (vy - vn * ny) * wf;
     }
   };
 

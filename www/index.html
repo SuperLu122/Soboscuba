@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <title>Soboscuba</title>
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-  <meta name="description" content="Pull back, let go, and merge squishy numbered blobs before the tank overflows.">
-  <meta name="theme-color" content="#0a3d5c">
+  <meta name="description" content="Pull back, let go, and merge squishy numbered sobos without squashing the pressure pads.">
+  <meta name="theme-color" content="#1b1b1b">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -14,7 +14,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-  <link rel="preload" href="fonts/lilita-one-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/audiowide-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -24,7 +24,7 @@
   <section id="title" class="overlay" aria-labelledby="logo">
     <div class="card card--title">
       <h1 id="logo" class="logo" aria-label="Soboscuba">
-        <span style="--c:#9be7ff">s</span><span style="--c:#5fd3c6">o</span><span style="--c:#ffd166">b</span><span style="--c:#ff9f5a">o</span><span style="--c:#ff6b81">s</span><span style="--c:#c77dff">c</span><span style="--c:#7b8cff">u</span><span style="--c:#4ade80">b</span><span style="--c:#f472b6">a</span>
+        <span style="--c:#ff2e2e">s</span><span style="--c:#ffe62e">o</span><span style="--c:#5cff2e">b</span><span style="--c:#2effbf">o</span><span style="--c:#2e8bff">s</span><span style="--c:#9b30ff">c</span><span style="--c:#ff34b4">u</span><span style="--c:#ff7433">b</span><span style="--c:#33ffff">a</span>
       </h1>
       <p class="tagline">Pull back. Let go. Merge the sobos.</p>
       <div class="actions">
@@ -35,8 +35,8 @@
       <ul class="howto">
         <li><b>Drag back</b> from anywhere and let go to fling the sobo. Pull further for a harder shot.</li>
         <li><b>Tap</b> to drop it gently straight down.</li>
-        <li><b>Equal numbers merge</b>: 2 + 2 = 4, all the way up to 16k.</li>
-        <li>Watch the <b>pressure pads</b> on the side walls. If the pile squeezes them into the red for two seconds, the tank is full.</li>
+        <li><b>Equal numbers merge</b>: 1 + 1 = 2, 2 + 2 = 4, all the way up to 16k.</li>
+        <li>Don't squash the <b>pressure pads</b>, the domes on the side walls. Press one too hard and its bar on the lid fills up. A full bar ends the game.</li>
       </ul>
       <p class="best">Best score <span id="title-best">0</span></p>
     </div>
@@ -63,7 +63,7 @@
       <dl class="stats">
         <div><dt>Score</dt><dd id="over-score">0</dd></div>
         <div><dt>Best</dt><dd id="over-best">0</dd></div>
-        <div><dt>Biggest blob</dt><dd id="over-biggest">2</dd></div>
+        <div><dt>Biggest sobo</dt><dd id="over-biggest">2</dd></div>
       </dl>
       <div class="actions actions--stack">
         <button id="btn-again" class="btn btn--primary" type="button">Play again</button>
@@ -82,8 +82,8 @@
         <button id="btn-awards-x" class="btn btn--icon" type="button" aria-label="Close">&times;</button>
       </div>
       <ul id="awards-list" class="awards"></ul>
-      <h3 class="subhead">Blob styles</h3>
-      <div id="styles-list" class="styles" role="radiogroup" aria-label="Blob style"></div>
+      <h3 class="subhead">Sobo styles</h3>
+      <div id="styles-list" class="styles" role="radiogroup" aria-label="Sobo style"></div>
       <button id="btn-awards-close" class="btn btn--primary" type="button">Done</button>
     </div>
   </section>

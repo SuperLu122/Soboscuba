@@ -1,6 +1,6 @@
 /* Offline cache for the installed (home screen / desktop) app.
  * Bump VERSION whenever any cached file changes. */
-var VERSION = 'soboscuba-v5';
+var VERSION = 'soboscuba-v6';
 var FILES = [
   './',
   'index.html',
@@ -9,7 +9,7 @@ var FILES = [
   'js/audio.js',
   'js/game.js',
   'manifest.webmanifest',
-  'fonts/lilita-one-latin.woff2',
+  'fonts/audiowide-latin.woff2',
   'fonts/nunito-latin.woff2',
   'icons/icon-192.png',
   'icons/icon-512.png',

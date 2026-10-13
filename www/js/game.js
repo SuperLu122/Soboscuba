@@ -1,5 +1,5 @@
 /*
- * Soboscuba game layer: slingshot input, merging, scoring, danger line,
+ * Soboscuba game layer: slingshot input, merging, scoring, pressure pads,
  * rendering, menus and save/resume. Physics lives in physics.js.
  */
 (function (SB) {
@@ -11,29 +11,31 @@
   var world = new SB.World();
   var outlineBuf = new Float32Array(1024);
 
-  var FONT = "'Lilita One', 'Arial Rounded MT Bold', 'Trebuchet MS', system-ui, sans-serif";
+  var FONT = "'Audiowide', 'Arial Black', 'Trebuchet MS', system-ui, sans-serif";
   var MAX_PULL = 140;      // world px of drag for a full-power shot
   var MAX_SPEED = 1500;    // px/s at full power
-  var DANGER_TIME = 2;     // seconds a pressure pad may stay overloaded
-  var PAD_LIMIT = 12;      // smoothed pad pressure that counts as overloaded
+  var DANGER_TIME = 3;     // seconds of pressing at the limit that fill a pad's meter
+  var PAD_LIMIT = 0.5;     // smoothed pad pressure that counts as pressing too hard
+  var PAD_DRAIN = 0.2;     // meter drained per second while a pad is left alone
+  var QUEUE = 3;           // sobos waiting in line beside the launcher
   var COOLDOWN = 0.45;
   var DEAD_ZONE = 5;       // world px of drag treated as a tap
 
-  /* ---------- blob styles (colors[level], value = 2^level) ---------- */
+  /* ---------- blob styles (colors[level], value = 2^level, level 0 is a 1) ---------- */
   var STYLES = {
-    reef: { name: 'Reef', colors: ['#9be7ff', '#9be7ff', '#5fd3c6', '#ffd166', '#ff9f5a', '#ff6b81',
+    classic: { name: 'Classic', colors: ['#ff2e2e', '#ffe62e', '#5cff2e', '#2effbf', '#2e8bff', '#9b30ff',
+      '#ff34b4', '#ff7433', '#d9ff33', '#f2f2f2', '#33ffff', '#ffc233', '#7a5cff', '#ff5c33', '#33ff88', '#ff33ff'] },
+    ocean: { name: 'Ocean', unlock: 'v512', colors: ['#d8f6ff', '#9be7ff', '#5fd3c6', '#ffd166', '#ff9f5a', '#ff6b81',
       '#c77dff', '#7b8cff', '#4ade80', '#ff5d5d', '#f472b6', '#fbbf24', '#22d3ee', '#a3e635', '#e879f9', '#f8fafc'] },
-    pastel: { name: 'Pastel', unlock: 'v512', colors: ['#d4f1ff', '#d4f1ff', '#b8f0e0', '#fff1b8', '#ffd6b8',
+    pastel: { name: 'Pastel', unlock: 'combo5', colors: ['#f0f0ff', '#d4f1ff', '#b8f0e0', '#fff1b8', '#ffd6b8',
       '#ffc2d1', '#e3c8ff', '#c9d1ff', '#c6f6c6', '#ffb3b3', '#ffc8e8', '#ffe2a8', '#b5f1ff', '#e0f7a8', '#f6c8ff', '#ffffff'] },
-    neon: { name: 'Neon', unlock: 'combo5', colors: ['#7df9ff', '#7df9ff', '#39ff88', '#f8ff3a', '#ff9f1c',
-      '#ff3fa4', '#b14cff', '#4d6dff', '#00f5d4', '#ff2e63', '#fee440', '#00bbf9', '#9b5de5', '#f15bb5', '#00f5a0', '#ffffff'] },
-    sunset: { name: 'Sunset', unlock: 's25k', colors: ['#fff3b0', '#fff3b0', '#ffe08a', '#ffc86b', '#ffab5c',
+    sunset: { name: 'Sunset', unlock: 's25k', colors: ['#fffbe0', '#fff3b0', '#ffe08a', '#ffc86b', '#ffab5c',
       '#ff8f5a', '#ff6f61', '#f0567a', '#d94892', '#b23fa6', '#8e44ad', '#6c4ab6', '#4f5bd5', '#3b7dd8', '#2ea0d6', '#ffffff'] },
-    midnight: { name: 'Midnight', unlock: 'v2048', colors: ['#c4d8ff', '#c4d8ff', '#a6c1ff', '#8aa9f7', '#7392ea',
+    midnight: { name: 'Midnight', unlock: 'v2048', colors: ['#e4eeff', '#c4d8ff', '#a6c1ff', '#8aa9f7', '#7392ea',
       '#5f7ddb', '#4f6acb', '#4258b9', '#374aa6', '#2d3c92', '#25317e', '#1e286b', '#ffd166', '#ff9f5a', '#ff6b81', '#ffffff'] }
   };
-  var STYLE_ORDER = ['reef', 'pastel', 'neon', 'sunset', 'midnight'];
-  var INK = '#0b2239', INK_LIGHT = '#f4fbff';
+  var STYLE_ORDER = ['classic', 'ocean', 'pastel', 'sunset', 'midnight'];
+  var INK = '#111111';
 
   function hexRgb(h) {
     var n = parseInt(h.slice(1), 16);
@@ -47,15 +49,17 @@
   function luma(h) { var c = hexRgb(h); return (0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]) / 255; }
   var LV = [];
   function applyStyle(id) {
-    var st = STYLES[id] || STYLES.reef;
+    var st = STYLES[id] || STYLES.classic;
     for (var l = 0; l <= 24; l++) {
       var base = st.colors[Math.min(l, st.colors.length - 1)];
-      LV[l] = { fill: base, light: mix(base, '#ffffff', 0.5), dark: mix(base, '#06233a', 0.5),
-        ink: luma(base) < 0.5 ? INK_LIGHT : INK };
+      // Sobos fresh from the launcher wear a deep shade of their own colour
+      // on their number; sobos made by a merge wear black.
+      LV[l] = { fill: base, light: mix(base, '#ffffff', 0.35),
+        dark: luma(base) < 0.45 ? mix(base, '#ffffff', 0.6) : mix(base, '#000000', 0.55) };
     }
   }
   function lv(level) { return LV[Math.min(level, LV.length - 1)]; }
-  function label(v) { return v >= 1024 ? (v / 1024) + 'k' : String(v); }
+  function label(v) { return v >= 16384 ? (v / 1024) + 'k' : String(v); }
 
   /* ---------- storage (may throw in private mode / sandboxes) ---------- */
   var store = {
@@ -72,12 +76,14 @@
     mode: 'title',          // title | play | paused | over
     score: 0,
     best: store.get('best', 0),
-    biggest: 2,
+    biggest: 1,
     combo: 0, comboT: 0,
-    cur: 2, next: 4,
+    cur: 1, next: 2,
+    queue: [2, 4, 1],       // waiting in line; queue[0] is next
     readyT: 0,
     dangerT: 0, warnT: 0,
     pad: [0, 0],            // smoothed pressure on the left and right pads
+    meter: [0, 0],          // each pad's danger meter (the bars on the lid); full = game over
     shake: 0,
     time: 0,
     saveT: 0,
@@ -86,23 +92,23 @@
     newBest: false,
     dangerPeak: 0,
     tutorial: false,
-    style: store.get('style', 'reef')
+    style: store.get('style', 'classic')
   };
   Audio.setMuted(store.get('muted', false));
   var hapticsOn = store.get('haptics', true);
 
   /* ---------- achievements ---------- */
   var ACHIEVEMENTS = [
-    { id: 'merge', name: 'First squish', desc: 'Merge two blobs.' },
+    { id: 'merge', name: 'First squish', desc: 'Merge two sobos.' },
     { id: 'v128', name: 'Getting chunky', desc: 'Make a 128.' },
     { id: 'v512', name: 'Big wobbler', desc: 'Make a 512.' },
     { id: 'v2048', name: 'Tank boss', desc: 'Make a 2k.' },
     { id: 'v8192', name: 'Leviathan', desc: 'Make an 8k.' },
     { id: 'combo3', name: 'Chain reaction', desc: 'Get a combo of x3.' },
     { id: 'combo5', name: 'Cascade', desc: 'Get a combo of x5.' },
-    { id: 'bullseye', name: 'Bullseye', desc: 'Merge a blob with the first blob it touches.' },
-    { id: 'bank', name: 'Bank shot', desc: 'Bounce a blob off a wall straight into a merge.' },
-    { id: 'close', name: 'Close call', desc: 'Take the weight off the pressure pads with under half a second to spare.' },
+    { id: 'bullseye', name: 'Bullseye', desc: 'Merge a sobo with the first sobo it touches.' },
+    { id: 'bank', name: 'Bank shot', desc: 'Bounce a sobo off a wall straight into a merge.' },
+    { id: 'close', name: 'Close call', desc: 'Ease off a pressure pad when its bar is nearly full.' },
     { id: 's10k', name: 'Five figures', desc: 'Score 10,000 in one game.' },
     { id: 's25k', name: 'Deep diver', desc: 'Score 25,000 in one game.' },
     { id: 's100k', name: 'Abyssal', desc: 'Score 100,000 in one game.' }
@@ -110,7 +116,7 @@
   var awards = store.get('awards', {});
   var toastQueue = [], toastBusy = false;
   function styleUnlocked(id) { var u = STYLES[id].unlock; return !u || !!awards[u]; }
-  if (!STYLES[S.style] || !styleUnlocked(S.style)) S.style = 'reef';
+  if (!STYLES[S.style] || !styleUnlocked(S.style)) S.style = 'classic';
   applyStyle(S.style);
 
   function unlock(id) {
@@ -120,7 +126,7 @@
     var a = ACHIEVEMENTS.filter(function (x) { return x.id === id; })[0];
     var styleName = null;
     STYLE_ORDER.forEach(function (k) { if (STYLES[k].unlock === id) styleName = STYLES[k].name; });
-    toastQueue.push({ name: a.name, desc: a.desc, extra: styleName ? 'New blob style: ' + styleName : '' });
+    toastQueue.push({ name: a.name, desc: a.desc, extra: styleName ? 'New sobo style: ' + styleName : '' });
     showToast();
   }
   function showToast() {
@@ -147,23 +153,22 @@
     } catch (e) {}
   }
 
-  var fx = [];       // droplets and bubbles
+  var fx = [];       // splash droplets
   var popups = [];   // floating score text
-  var ambient = [];  // background bubbles (screen space, 0..1)
-  for (var a = 0; a < 26; a++) {
-    ambient.push({ x: Math.random(), y: Math.random(), r: 1 + Math.random() * 3.5,
-      s: 0.015 + Math.random() * 0.03, w: Math.random() * 6 });
-  }
 
   function rollValue() {
     var r = Math.random() * 100;
-    return r < 38 ? 2 : r < 68 ? 4 : r < 88 ? 8 : 16;
+    return r < 34 ? 1 : r < 64 ? 2 : r < 86 ? 4 : 8;
+  }
+  function fillQueue() {
+    S.queue = [];
+    for (var i = 0; i < QUEUE; i++) S.queue.push(rollValue());
+    S.next = S.queue[0];
   }
 
   /* ---------- view / resize ---------- */
   var view = { scale: 1, ox: 0, oy: 0, dpr: 1, w: 0, h: 0 };
   var safeEl = document.getElementById('safe');
-  var bgGrad = null;
 
   function resize() {
     var w = window.innerWidth, h = window.innerHeight;
@@ -180,13 +185,9 @@
     canvas.height = Math.round(h * dpr);
     canvas.style.width = w + 'px';
     canvas.style.height = h + 'px';
-    bgGrad = ctx.createLinearGradient(0, 0, 0, canvas.height);
-    bgGrad.addColorStop(0, '#11688a');
-    bgGrad.addColorStop(0.45, '#0a3d5c');
-    bgGrad.addColorStop(1, '#03111f');
     document.documentElement.style.setProperty('--tank-w', (CFG.W * sc) + 'px');
-    // Toasts sit just under the danger line, clear of the launcher and HUD.
-    document.documentElement.style.setProperty('--toast-top', (view.oy + (CFG.padBot + 14) * sc) + 'px');
+    // Toasts sit inside the tank just under the launcher.
+    document.documentElement.style.setProperty('--toast-top', (view.oy + (CFG.dangerY + 50) * sc) + 'px');
   }
   window.addEventListener('resize', resize);
   window.addEventListener('orientationchange', function () { setTimeout(resize, 200); });
@@ -199,9 +200,10 @@
   function newGame() {
     world.clear();
     fx.length = 0; popups.length = 0;
-    S.score = 0; S.biggest = 2; S.combo = 0; S.comboT = 0;
-    S.cur = rollValue(); S.next = rollValue();
-    S.readyT = 0.2; S.dangerT = 0; S.dangerPeak = 0; S.pad = [0, 0]; S.newBest = false; S.overT = 0;
+    S.score = 0; S.biggest = 1; S.combo = 0; S.comboT = 0;
+    S.cur = rollValue(); fillQueue();
+    S.readyT = 0.2; S.dangerT = 0; S.dangerPeak = 0; S.pad = [0, 0]; S.meter = [0, 0];
+    S.newBest = false; S.overT = 0;
     S.tutorial = !store.get('tutorialDone', false);
     setMode('play');
     save();
@@ -209,10 +211,10 @@
 
   function demoPile() {
     world.clear();
-    var demo = [[128, 120, 640], [64, 290, 650], [32, 360, 560], [16, 210, 560],
-      [8, 70, 520], [256, 230, 430], [4, 110, 430], [2, 160, 380], [8, 330, 420], [16, 60, 330]];
-    demo.forEach(function (d) { world.add(new SB.Blob(d[0], d[1], d[2], 0, 0)); });
-    S.cur = 8; S.next = 4; S.readyT = 0;
+    var demo = [[128, 110, 530], [1024, 270, 520], [8, 360, 560], [64, 70, 430],
+      [256, 170, 420], [32, 250, 400], [256, 340, 420], [4, 60, 560], [64, 290, 330], [128, 200, 300]];
+    demo.forEach(function (d) { var b = world.add(new SB.Blob(d[0], d[1], d[2], 0, 0)); b.made = d[0] > 64; });
+    S.cur = 32; S.queue = [2, 1, 4]; S.next = 2; S.readyT = 0; S.meter = [0, 0]; S.pad = [0, 0];
   }
 
   function spawnPoint(pull) {
@@ -233,7 +235,7 @@
     world.add(b);
     if (S.tutorial) { S.tutorial = false; store.set('tutorialDone', true); }
     if (len < 1) Audio.drop(); else Audio.launch(len / MAX_PULL);
-    S.cur = S.next; S.next = rollValue();
+    S.cur = S.queue.shift(); S.queue.push(rollValue()); S.next = S.queue[0];
     S.readyT = COOLDOWN;
   }
 
@@ -254,6 +256,7 @@
     var vx = (A.vx + B.vx) / 2, vy = (A.vy + B.vy) / 2;
     world.remove(A); world.remove(B);
     var nb = new SB.Blob(A.value * 2, cx, cy, vx * 0.6, vy * 0.6, A.R);
+    nb.made = true;
     nb.parents = [{ x: A.cx, y: A.cy, r: A.curR }, { x: B.cx, y: B.cy, r: B.curR }];
     world.add(nb);
 
@@ -269,7 +272,7 @@
     }
     popups.push({ x: cx, y: cy - nb.R * 0.4, text: '+' + gained.toLocaleString(),
       sub: S.combo > 1 ? 'combo x' + S.combo : '', life: 1.1, max: 1.1,
-      size: 18 + Math.min(level, 12) * 1.6, color: lv(level).light });
+      size: 14 + Math.min(level, 12) * 1.3, color: lv(level).light });
     burst(cx, cy, nb.R, level);
     Audio.merge(level, S.combo);
     if (level >= 7) S.shake = Math.min(14, (level - 6) * 2.4);
@@ -304,40 +307,43 @@
         vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 120, r: 2 + Math.random() * 3.5,
         life: 0.5 + Math.random() * 0.4, max: 0.9, c: col });
     }
-    for (var j = 0; j < 4 + level; j++) {
-      fx.push({ t: 'bub', x: x + (Math.random() - 0.5) * R * 1.4, y: y + (Math.random() - 0.5) * R,
-        vx: 0, vy: -60 - Math.random() * 90, r: 2 + Math.random() * 5, w: Math.random() * 6,
-        life: 1 + Math.random() * 0.8, max: 1.8 });
-    }
   }
 
-  /* The pile loses when it squeezes the pressure pads on the side walls too
-   * hard for too long. Pressure is smoothed so the brief spike from a hard
-   * shot doesn't count. A blob jammed up into the launcher counts too. */
+  /* The pile loses by pressing on the pressure pads (the domes on the side
+   * walls). Pressure is smoothed so the spike from a hard shot doesn't
+   * count. While a pad is pressed past its limit its meter on the lid fills;
+   * left alone it slowly drains. A full meter ends the game. A sobo jammed
+   * up into the launcher counts as pressing both pads. */
   function checkDanger(dt) {
     var jam = 0;
     for (var i = 0; i < world.blobs.length; i++) {
       var b = world.blobs[i];
       if (b.age > 1.5 && b.growT >= 1 && b.cy - b.curR < CFG.launchY) { jam = PAD_LIMIT * 1.5; break; }
     }
-    var k = Math.min(1, dt / 0.35);
-    S.pad[0] += (world.padL + jam - S.pad[0]) * k;
-    S.pad[1] += (world.padR + jam - S.pad[1]) * k;
-    var over = Math.max(S.pad[0], S.pad[1]) > PAD_LIMIT;
-    if (over) {
-      S.dangerT += dt;
-      S.warnT -= dt;
-      if (S.warnT <= 0) { Audio.warn(); haptic(1); S.warnT = Math.max(0.18, 0.6 - S.dangerT * 0.2); }
-      if (S.dangerT >= DANGER_TIME) gameOver();
-    } else {
-      S.dangerT = Math.max(0, S.dangerT - dt);
-      S.warnT = 0;
-      if (S.dangerT === 0) {
-        if (S.dangerPeak >= DANGER_TIME - 0.5) unlock('close');
-        S.dangerPeak = 0;
-      }
+    var k = Math.min(1, dt / 0.5), pressing = false;
+    var raw = [world.padL, world.padR];
+    for (var side = 0; side < 2; side++) {
+      // Capping the raw reading keeps one hard hit from counting as a squeeze.
+      S.pad[side] += (Math.min(raw[side], PAD_LIMIT * 2) + jam - S.pad[side]) * k;
+      var load = S.pad[side] / PAD_LIMIT;
+      if (load >= 1) { S.meter[side] += dt * Math.min(2, load) / DANGER_TIME; pressing = true; }
+      else S.meter[side] = Math.max(0, S.meter[side] - dt * PAD_DRAIN);
+      // The pads give a little under load (drawn and felt by the physics).
+      world.padSink[side] = Math.min(7, Math.min(1.2, load) * 6);
     }
-    if (S.dangerT > S.dangerPeak) S.dangerPeak = S.dangerT;
+    var m = Math.max(S.meter[0], S.meter[1]);
+    S.dangerT = m * DANGER_TIME;
+    if (pressing) {
+      S.warnT -= dt;
+      if (S.warnT <= 0) { Audio.warn(); haptic(1); S.warnT = Math.max(0.18, 0.7 - m * 0.5); }
+      if (m >= 1) gameOver();
+    } else {
+      S.warnT = 0;
+      // Close call: a meter got nearly full and the pile was eased off it.
+      if (S.dangerPeak >= 0.85 && m < S.dangerPeak - 0.2) { unlock('close'); S.dangerPeak = 0; }
+    }
+    if (m > S.dangerPeak) S.dangerPeak = m;
+    if (m === 0) S.dangerPeak = 0;
   }
 
   function gameOver() {
@@ -355,23 +361,24 @@
   function save() {
     if (S.mode !== 'play' && S.mode !== 'paused') return;
     store.set('session', {
-      v: 1, score: S.score, biggest: S.biggest, cur: S.cur, next: S.next,
+      v: 2, score: S.score, biggest: S.biggest, cur: S.cur, queue: S.queue,
       blobs: world.blobs.map(function (b) {
-        return [b.value, Math.round(b.cx * 10) / 10, Math.round(b.cy * 10) / 10];
+        return [b.value, Math.round(b.cx * 10) / 10, Math.round(b.cy * 10) / 10, b.made ? 1 : 0];
       })
     });
   }
   function resume() {
     var s = store.get('session', null);
-    if (!s || s.v !== 1) return false;
+    if (!s || s.v !== 2) return false;
     world.clear();
     fx.length = 0; popups.length = 0;
     s.blobs.forEach(function (d) {
       var b = world.add(new SB.Blob(d[0], d[1], d[2], 0, 0));
       b.age = 2;
+      b.made = !!d[3];
     });
-    S.score = s.score; S.biggest = s.biggest; S.cur = s.cur; S.next = s.next;
-    S.combo = 0; S.comboT = 0; S.readyT = 0.3; S.dangerT = 0; S.pad = [0, 0]; S.newBest = false;
+    S.score = s.score; S.biggest = s.biggest; S.cur = s.cur; S.queue = s.queue.slice(0, QUEUE); S.next = S.queue[0];
+    S.combo = 0; S.comboT = 0; S.readyT = 0.3; S.dangerT = 0; S.pad = [0, 0]; S.meter = [0, 0]; S.newBest = false;
     setMode('play');
     return true;
   }
@@ -452,7 +459,7 @@
       b.disabled = !open;
       b.appendChild(el('b', null, st.name));
       var sw = el('span', 'swatches');
-      [1, 3, 5, 7, 9, 11].forEach(function (l) {
+      [0, 2, 5, 7, 8, 10].forEach(function (l) {
         var i = el('i');
         i.style.background = st.colors[l];
         sw.appendChild(i);
@@ -511,7 +518,7 @@
 
   /* ---------- input ---------- */
   var drag = null;
-  var PAUSE_BTN = { x: 38, y: 40, r: 22 };
+  var PAUSE_BTN = { x: 42, y: 58, r: 22 };
 
   canvas.addEventListener('pointerdown', function (e) {
     Audio.unlock();
@@ -596,8 +603,7 @@
       var f = fx[i];
       f.life -= dt;
       if (f.life <= 0) { fx.splice(i, 1); continue; }
-      if (f.t === 'drop') { f.vy += 900 * dt; f.vx *= 0.98; }
-      else { f.w += dt * 5; f.vx = Math.sin(f.w) * 20; }
+      f.vy += 900 * dt; f.vx *= 0.98;
       f.x += f.vx * dt; f.y += f.vy * dt;
     }
     for (var j = popups.length - 1; j >= 0; j--) {
@@ -605,16 +611,12 @@
       popups[j].y -= 40 * dt;
       if (popups[j].life <= 0) popups.splice(j, 1);
     }
-    for (var k = 0; k < ambient.length; k++) {
-      var b = ambient[k];
-      b.y -= b.s * dt;
-      b.w += dt;
-      if (b.y < -0.05) { b.y = 1.05; b.x = Math.random(); }
-    }
     S.shake *= 0.86;
   }
 
   /* ---------- rendering ---------- */
+  var BG = '#1b1b1b', FRAME = '#333333', FT = 13;   // FT: frame thickness
+
   function render() {
     var dpr = view.dpr;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -625,48 +627,50 @@
     var s = view.scale * dpr;
     ctx.setTransform(s, 0, 0, s, (view.ox + sx) * dpr, (view.oy + sy) * dpr);
 
-    drawTank();
-    drawPads();
+    tankPath(0);
+    ctx.fillStyle = '#000000';
+    ctx.fill();
+    ctx.save();
+    ctx.clip();   // splashes stay inside the tank
     for (var i = 0; i < world.blobs.length; i++) drawBlob(world.blobs[i]);
     drawFx();
-    drawPressureWarning();
+    ctx.restore();
+    drawPads();
+    drawFrame();
     if (S.mode === 'play' || S.mode === 'paused') drawLauncher();
+    drawPressureWarning();
     drawPopups();
     drawHud();
   }
 
+  /* Flat dark backdrop. With room either side of the tank (desktop, iPad
+   * held sideways) the name and score stand on end beside it. */
   function drawBackground() {
-    var w = canvas.width, h = canvas.height;
-    ctx.fillStyle = bgGrad || '#0a3d5c';
+    var w = canvas.width, h = canvas.height, dpr = view.dpr;
+    ctx.fillStyle = BG;
     ctx.fillRect(0, 0, w, h);
-    // Light shafts from the surface.
+    if (!sideText()) return;
+    var cy = (view.oy + (CFG.ceil + CFG.floor) / 2 * view.scale) * dpr;
+    var room = view.ox * dpr;
+    var span = (CFG.floor - CFG.ceil) * view.scale * dpr;
+    ctx.fillStyle = '#333333';
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'center';
     ctx.save();
-    ctx.globalCompositeOperation = 'lighter';
-    for (var i = 0; i < 4; i++) {
-      var x = w * (0.15 + i * 0.25) + Math.sin(S.time * 0.3 + i * 1.7) * w * 0.05;
-      var spread = w * (0.06 + 0.03 * Math.sin(S.time * 0.5 + i));
-      var g = ctx.createLinearGradient(0, 0, 0, h * 0.85);
-      g.addColorStop(0, 'rgba(160,230,255,0.10)');
-      g.addColorStop(1, 'rgba(160,230,255,0)');
-      ctx.fillStyle = g;
-      ctx.beginPath();
-      ctx.moveTo(x - spread * 0.3, 0);
-      ctx.lineTo(x + spread * 0.3, 0);
-      ctx.lineTo(x + spread * 2.2 + w * 0.08, h * 0.85);
-      ctx.lineTo(x - spread * 0.4 + w * 0.08, h * 0.85);
-      ctx.closePath();
-      ctx.fill();
-    }
+    ctx.translate(room * 0.62, cy);
+    ctx.rotate(-Math.PI / 2);
+    ctx.font = Math.min(room * 0.36, span / 6.2) + 'px ' + FONT;
+    ctx.fillText('soboscuba', 0, 0);
     ctx.restore();
-    ctx.strokeStyle = 'rgba(220,245,255,0.22)';
-    ctx.lineWidth = 1.2 * view.dpr;
-    for (var k = 0; k < ambient.length; k++) {
-      var b = ambient[k];
-      ctx.beginPath();
-      ctx.arc((b.x + Math.sin(b.w) * 0.01) * w, b.y * h, b.r * view.dpr, 0, Math.PI * 2);
-      ctx.stroke();
-    }
+    var txt = S.mode === 'title' ? S.best.toLocaleString() : S.score.toLocaleString();
+    ctx.save();
+    ctx.translate(w - room * 0.62, cy);
+    ctx.rotate(Math.PI / 2);
+    ctx.font = Math.min(room * 0.42, span / Math.max(3, txt.length * 0.9)) + 'px ' + FONT;
+    ctx.fillText(txt, 0, 0);
+    ctx.restore();
   }
+  function sideText() { return view.ox > 120; }
 
   function roundRect(x, y, w, h, r) {
     ctx.beginPath();
@@ -678,297 +682,267 @@
     ctx.closePath();
   }
 
-  function drawTank() {
-    var L = CFG.wallL, R = CFG.wallR, F = CFG.floor;
-    // Water inside the tank, a touch brighter than the sea behind it.
-    var g = ctx.createLinearGradient(0, 0, 0, F);
-    g.addColorStop(0, 'rgba(120,210,240,0.06)');
-    g.addColorStop(1, 'rgba(120,210,240,0.12)');
-    ctx.fillStyle = g;
-    ctx.fillRect(L, CFG.ceil, R - L, F - CFG.ceil);
-
-    // Sand floor.
-    var sg = ctx.createLinearGradient(0, F, 0, CFG.H);
-    sg.addColorStop(0, '#e9cf96');
-    sg.addColorStop(1, '#b98f58');
-    ctx.fillStyle = sg;
-    roundRect(L - 10, F, R - L + 20, CFG.H - F + 4, 8);
-    ctx.fill();
-    ctx.fillStyle = 'rgba(120,80,40,0.25)';
-    for (var i = 0; i < 18; i++) {
-      var px = L + ((i * 97) % (R - L)), py = F + 5 + ((i * 37) % 16);
-      ctx.beginPath(); ctx.arc(px, py, 1.4 + (i % 3) * 0.6, 0, Math.PI * 2); ctx.fill();
-    }
-
-    // Glass walls.
-    ctx.fillStyle = 'rgba(200,240,255,0.16)';
-    roundRect(L - 10, CFG.ceil + 40, 10, F - CFG.ceil - 36, 5); ctx.fill();
-    roundRect(R, CFG.ceil + 40, 10, F - CFG.ceil - 36, 5); ctx.fill();
-    ctx.strokeStyle = 'rgba(230,250,255,0.55)';
-    ctx.lineWidth = 2;
+  /* The tank's inside: a box with its two bottom corners cut off, grown by g. */
+  function tankPath(g) {
+    var L = CFG.wallL - g, R = CFG.wallR + g, T = CFG.ceil - g, F = CFG.floor + g;
+    var C = CFG.chamfer + g * (2 - Math.SQRT2);
     ctx.beginPath();
-    ctx.moveTo(L, CFG.ceil + 44); ctx.lineTo(L, F);
-    ctx.moveTo(R, CFG.ceil + 44); ctx.lineTo(R, F);
-    ctx.stroke();
-  }
-
-  /* Pressure pads: a button on each side wall that sinks in and heats up
-   * from teal to red as the pile squeezes it. */
-  function drawPads() {
-    var top = CFG.padTop, h = CFG.padBot - CFG.padTop, t = S.dangerT / DANGER_TIME;
-    var alarm = t > 0 ? 0.5 + 0.5 * Math.sin(S.time * (10 + t * 14)) : 0;
-    for (var side = 0; side < 2; side++) {
-      var load = Math.min(1.3, S.pad[side] / PAD_LIMIT);
-      var hot = Math.min(1, load);
-      var col = hot < 0.5 ? mix('#5fd3c6', '#ffd166', hot * 2) : mix('#ffd166', '#ff5d5d', (hot - 0.5) * 2);
-      var sink = Math.min(1, load) * 4;
-      var wall = side ? CFG.wallR : CFG.wallL;
-      // Housing set into the wall; the pad sinks outward into it when pressed.
-      var hx = side ? wall : wall - 13;
-      ctx.fillStyle = 'rgba(6,26,42,0.7)';
-      roundRect(hx, top - 5, 13, h + 10, 5);
-      ctx.fill();
-      if (load > 1) {
-        ctx.fillStyle = 'rgba(255,93,93,' + (0.2 + alarm * 0.35) + ')';
-        roundRect(hx - 5, top - 10, 23, h + 20, 9);
-        ctx.fill();
-      }
-      ctx.fillStyle = col;
-      roundRect(side ? wall + sink : wall - 9 - sink, top, 9, h, 4);
-      ctx.fill();
-      // Gauge: lit notches up the pad.
-      for (var n = 0; n < 6; n++) {
-        var lit = load * 6 > n + 0.2;
-        ctx.fillStyle = lit ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.18)';
-        var ny = top + h - 10 - n * (h - 14) / 5;
-        ctx.beginPath(); ctx.arc(side ? wall + sink + 4.5 : wall - 4.5 - sink, ny, 1.6, 0, Math.PI * 2); ctx.fill();
-      }
-    }
-  }
-
-  /* Countdown and warning, drawn over the blobs. */
-  function drawPressureWarning() {
-    var t = S.dangerT / DANGER_TIME;
-    if (t <= 0) return;
-    var alarm = 0.5 + 0.5 * Math.sin(S.time * (10 + t * 14));
-    // Countdown in the middle of the launch zone's lower edge.
-    var cx = CFG.W / 2, cy = CFG.dangerY - 6;
-    ctx.fillStyle = 'rgba(30,4,12,' + (0.6 + alarm * 0.15) + ')';
-    roundRect(cx - 154, cy - 21, 252, 42, 21);
-    ctx.fill();
-    ctx.lineWidth = 5;
-    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
-    ctx.beginPath(); ctx.arc(cx + 70, cy, 13, 0, Math.PI * 2); ctx.stroke();
-    ctx.strokeStyle = '#ff6e6e';
-    ctx.beginPath(); ctx.arc(cx + 70, cy, 13, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (1 - t)); ctx.stroke();
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#ffffff';
-    ctx.font = '13px ' + FONT;
-    ctx.fillText(Math.max(0, DANGER_TIME - S.dangerT).toFixed(1), cx + 70, cy + 1);
-    var a = 0.65 + alarm * 0.35;
-    ctx.font = (19 + alarm * 2) + 'px ' + FONT;
-    ctx.textAlign = 'right';
-    ctx.lineWidth = 4;
-    ctx.strokeStyle = 'rgba(60,0,0,' + (0.6 * a) + ')';
-    ctx.fillStyle = 'rgba(255,120,120,' + a + ')';
-    ctx.strokeText('TOO MUCH PRESSURE!', cx + 50, cy + 1);
-    ctx.fillText('TOO MUCH PRESSURE!', cx + 50, cy + 1);
-  }
-
-  function smoothPath(pts, n) {
-    ctx.beginPath();
-    var lx = pts[(n - 1) * 2], ly = pts[(n - 1) * 2 + 1];
-    ctx.moveTo((lx + pts[0]) / 2, (ly + pts[1]) / 2);
-    for (var i = 0; i < n; i++) {
-      var x = pts[i * 2], y = pts[i * 2 + 1];
-      var j = (i + 1) % n;
-      ctx.quadraticCurveTo(x, y, (x + pts[j * 2]) / 2, (y + pts[j * 2 + 1]) / 2);
-    }
+    ctx.moveTo(L, T); ctx.lineTo(R, T); ctx.lineTo(R, F - C); ctx.lineTo(R - C, F);
+    ctx.lineTo(L + C, F); ctx.lineTo(L, F - C);
     ctx.closePath();
   }
 
-  function blobPaint(level, cx, cy, R) {
-    var c = lv(level);
-    var g = ctx.createRadialGradient(cx - R * 0.35, cy - R * 0.45, R * 0.1, cx, cy, R * 1.15);
-    g.addColorStop(0, c.light);
-    g.addColorStop(0.55, c.fill);
-    g.addColorStop(1, c.dark);
-    return g;
+  function drawFrame() {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(-50, -50, CFG.W + 100, CFG.H + 100);
+    tankPathAppend();
+    ctx.clip('evenodd');
+    tankPath(FT / 2);
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = FT;
+    ctx.strokeStyle = FRAME;
+    ctx.stroke();
+    ctx.restore();
+
+    // A slot in each wall behind its pad, with the pad's pin in it.
+    for (var side = 0; side < 2; side++) {
+      var x = side ? CFG.wallR + FT * 0.45 : CFG.wallL - FT * 0.45;
+      ctx.fillStyle = '#151515';
+      roundRect(x - 2.5, CFG.padY - CFG.padR * 1.15, 5, CFG.padR * 2.3, 2.5);
+      ctx.fill();
+      ctx.fillStyle = '#7a7a7a';
+      ctx.beginPath(); ctx.arc(x, CFG.padY, 2.6, 0, Math.PI * 2); ctx.fill();
+    }
+    drawMeters();
+  }
+  function tankPathAppend() {
+    var L = CFG.wallL, R = CFG.wallR, T = CFG.ceil, F = CFG.floor, C = CFG.chamfer;
+    ctx.moveTo(L, T); ctx.lineTo(R, T); ctx.lineTo(R, F - C); ctx.lineTo(R - C, F);
+    ctx.lineTo(L + C, F); ctx.lineTo(L, F - C);
+    ctx.closePath();
+  }
+
+  /* Each pad's danger meter sits in the lid above its side: the left bar
+   * fills from the left corner, the right bar from the right corner. */
+  function drawMeters() {
+    var len = (CFG.wallR - CFG.wallL) * 0.36, y = CFG.ceil - FT / 2 - 2.5;
+    var flash = 0.5 + 0.5 * Math.sin(S.time * 16);
+    for (var side = 0; side < 2; side++) {
+      var m = Math.min(1, S.meter[side]);
+      var x0 = side ? CFG.wallR - len : CFG.wallL;
+      ctx.fillStyle = '#1c1c1c';
+      roundRect(x0, y, len, 5, 2.5);
+      ctx.fill();
+      if (m <= 0.005) continue;
+      var col = mix('#8c8c8c', '#ff3b3b', Math.min(1, m * m * 1.6));
+      if (m > 0.7 && S.pad[side] >= PAD_LIMIT) col = mix(col, '#ffffff', flash * 0.35);
+      ctx.fillStyle = col;
+      var w = Math.max(5, len * m);
+      roundRect(side ? CFG.wallR - w : CFG.wallL, y, w, 5, 2.5);
+      ctx.fill();
+    }
+  }
+
+  /* Pressure pads: grey domes bulging out of the side walls. They give a
+   * little under load and warm towards red as their meter fills. */
+  function drawPads() {
+    ctx.save();
+    tankPath(0);
+    ctx.clip();
+    for (var side = 0; side < 2; side++) {
+      var sink = world.padSink[side];
+      var cx = side ? CFG.wallR + CFG.padIn + sink : CFG.wallL - CFG.padIn - sink;
+      var m = Math.min(1, S.meter[side]);
+      ctx.fillStyle = mix('#3c3c3c', '#5a1a1a', m);
+      ctx.beginPath(); ctx.arc(cx, CFG.padY, CFG.padR, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = mix('#686868', '#ff4a4a', Math.pow(m, 1.4));
+      ctx.beginPath(); ctx.arc(cx + (side ? 3 : -3), CFG.padY, CFG.padR - 5, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  /* Warning over the tank while a pad is being pressed too hard. */
+  function drawPressureWarning() {
+    var pressing = S.pad[0] >= PAD_LIMIT || S.pad[1] >= PAD_LIMIT;
+    var m = Math.max(S.meter[0], S.meter[1]);
+    if (!pressing || m < 0.25 || S.mode !== 'play') return;
+    var alarm = 0.5 + 0.5 * Math.sin(S.time * (10 + m * 14));
+    var cx = CFG.W / 2, cy = CFG.dangerY + 24;
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    roundRect(cx - 108, cy - 15, 216, 30, 15);
+    ctx.fill();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = '14px ' + FONT;
+    ctx.fillStyle = mix('#ff8080', '#ff2e2e', alarm);
+    ctx.fillText('TOO MUCH PRESSURE', cx, cy + 1);
+  }
+
+  function nFor(R) { return Math.max(9, Math.ceil(Math.PI * (R - SB.PR) / (SB.PR * 0.82))); }
+
+  function polyPath(pts, n) {
+    ctx.beginPath();
+    ctx.moveTo(pts[0], pts[1]);
+    for (var i = 1; i < n; i++) ctx.lineTo(pts[i * 2], pts[i * 2 + 1]);
+    ctx.closePath();
   }
 
   function drawBlob(b) {
     var pts = world.outline(b, outlineBuf);
-    var R = b.curR;
-    smoothPath(pts, b.n);
-    ctx.fillStyle = blobPaint(b.level, b.cx, b.cy, R);
+    polyPath(pts, b.n);
+    ctx.fillStyle = lv(b.level).fill;
     ctx.fill();
-    ctx.lineWidth = 2.5;
-    ctx.strokeStyle = lv(b.level).dark;
+    // A thin stroke in the same colour rounds off the corners a touch.
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = lv(b.level).fill;
     ctx.stroke();
-    drawGloss(b.cx, b.cy, R);
-    drawNumber(b.cx, b.cy, R, b.value, b.level);
+    drawNumber(b.cx, b.cy, b.curR, b.value, b.level, b.made);
   }
 
-  function drawGloss(cx, cy, R) {
-    ctx.fillStyle = 'rgba(255,255,255,0.35)';
-    ctx.beginPath();
-    ctx.ellipse(cx - R * 0.42, cy - R * 0.52, R * 0.18, R * 0.1, -0.6, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  function drawNumber(cx, cy, R, value, level) {
+  function drawNumber(cx, cy, R, value, level, made) {
     var txt = label(value);
-    var fs = Math.min(64, R * (txt.length > 3 ? 0.6 : txt.length > 2 ? 0.72 : txt.length > 1 ? 0.85 : 1.0));
+    var fs = (10 + R * 0.17) * (txt.length > 3 ? 0.85 : 1);
     ctx.font = fs + 'px ' + FONT;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillStyle = lv(level).ink;
-    ctx.globalAlpha = 0.9;
-    ctx.fillText(txt, cx, cy + fs * 0.05);
-    ctx.globalAlpha = 1;
+    ctx.fillStyle = made ? INK : lv(level).dark;
+    ctx.fillText(txt, cx, cy + fs * 0.06);
   }
 
-  function drawStaticBlob(value, cx, cy, R, stretchX, stretchY, ang) {
-    var level = Math.round(Math.log2(value));
+  /* A sobo outside the physics (launcher and queue): a regular polygon with
+   * the same corner count as the real thing, optionally stretched. */
+  function drawStaticBlob(value, cx, cy, R, stretchX, stretchY, ang, selected) {
+    var level = Math.round(Math.log2(value)), n = nFor(R);
     ctx.save();
     ctx.translate(cx, cy);
     ctx.rotate(ang || 0);
     ctx.scale(stretchX || 1, stretchY || 1);
     ctx.rotate(-(ang || 0));
     ctx.beginPath();
-    ctx.arc(0, 0, R, 0, Math.PI * 2);
-    ctx.fillStyle = blobPaint(level, 0, 0, R);
+    for (var i = 0; i < n; i++) {
+      var a = (i / n) * Math.PI * 2 + 0.3;
+      if (i) ctx.lineTo(Math.cos(a) * R, Math.sin(a) * R); else ctx.moveTo(Math.cos(a) * R, Math.sin(a) * R);
+    }
+    ctx.closePath();
+    ctx.lineJoin = 'round';
+    if (selected) {
+      ctx.lineWidth = 7;
+      ctx.strokeStyle = '#ffffff';
+      ctx.stroke();
+    }
+    ctx.fillStyle = lv(level).fill;
     ctx.fill();
-    ctx.lineWidth = 2.5;
-    ctx.strokeStyle = lv(level).dark;
-    ctx.stroke();
-    drawGloss(0, 0, R);
-    drawNumber(0, 0, R, value, level);
     ctx.restore();
+    drawNumber(cx, cy, R, value, level, false);
   }
 
+  /* The launcher: the current sobo hangs from the lid with the queue lined
+   * up to its right, each marked by a dot on the lid. While a sobo is being
+   * aimed, a white arrow shows where it will go. */
   function drawLauncher() {
     var pull = currentPull();
     var len = Math.hypot(pull.x, pull.y);
-    var R = SB.radiusFor(Math.log2(S.cur));
-    var p = spawnPoint(pull);
-    var ax = CFG.launchX - 50, bx = CFG.launchX + 50, ay = CFG.launchY - 4;
-
-    // Launcher posts.
-    ctx.fillStyle = 'rgba(230,250,255,0.5)';
-    ctx.beginPath(); ctx.arc(ax, ay, 5, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.arc(bx, ay, 5, 0, Math.PI * 2); ctx.fill();
-
     var ready = S.readyT <= 0;
-    // Back band.
-    ctx.strokeStyle = 'rgba(255,170,140,0.85)';
-    ctx.lineWidth = 3;
-    ctx.lineCap = 'round';
-    if (ready && len > 1) {
-      var nx = pull.x / len, ny = pull.y / len;
-      var backX = p.x - nx * R * 0.9, backY = p.y - ny * R * 0.9;
-      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(backX, backY); ctx.lineTo(bx, ay); ctx.stroke();
-    } else {
-      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, ay); ctx.stroke();
-    }
+    var p = ready ? spawnPoint(pull) : { x: CFG.launchX, y: CFG.launchY };
 
-    if (ready && S.tutorial && !drag) {
-      drawTutorial(R);
-      return;
+    if (ready && S.tutorial && !drag) { drawTutorial(); return; }
+
+    // Slot positions for the current sobo and the queue.
+    var vals = [S.cur].concat(S.queue), xs = [], rs = [];
+    var x = CFG.launchX;
+    for (var i = 0; i < vals.length; i++) {
+      var r = SB.radiusFor(Math.log2(vals[i]));
+      if (i) x += rs[i - 1] + r + 1;
+      xs.push(x); rs.push(r);
     }
-    if (ready) {
-      if (len >= DEAD_ZONE) drawTrajectory(p, pull, R);
-      var pop = Math.min(1, -S.readyT / 0.15 + 1);
-      var wob = 1 + Math.sin(S.time * 5) * 0.025;
-      var st = len / MAX_PULL;
-      var ang = Math.atan2(pull.y, pull.x);
-      drawStaticBlob(S.cur, p.x, p.y, R * wob * pop, 1 + st * 0.18, 1 - st * 0.12, ang);
-    } else {
-      ctx.strokeStyle = 'rgba(230,250,255,0.25)';
-      ctx.setLineDash([4, 5]);
-      ctx.beginPath(); ctx.arc(CFG.launchX, CFG.launchY, R, 0, Math.PI * 2); ctx.stroke();
-      ctx.setLineDash([]);
+    // While the next sobo moves up, the whole line slides left one slot.
+    var e = ready ? 0 : Math.max(0, S.readyT / COOLDOWN);
+    e = e * e * (3 - 2 * e);
+    for (var q = vals.length - 1; q >= 0; q--) {
+      var nx = q + 1 < xs.length ? xs[q + 1] : xs[q] + rs[q] * 2 + 1;
+      var dx = xs[q] + (nx - xs[q]) * e;
+      if (dx - rs[q] > CFG.wallR - 2) continue;
+      ctx.fillStyle = q === 0 ? '#ffffff' : '#5a5a5a';
+      ctx.beginPath(); ctx.arc(q === 0 && ready ? p.x : dx, CFG.ceil + 4, q === 0 ? 3.5 : 2.6, 0, Math.PI * 2); ctx.fill();
+      if (q === 0 && ready) continue;
+      drawStaticBlob(vals[q], dx, CFG.launchY, rs[q], 1, 1, 0, false);
+    }
+    if (!ready) return;
+
+    var st = len / MAX_PULL;
+    var ang = Math.atan2(pull.y, pull.x);
+    var pop = Math.min(1, -S.readyT / 0.15 + 1);
+    var wob = 1 + Math.sin(S.time * 5) * 0.025;
+    drawStaticBlob(S.cur, p.x, p.y, rs[0] * wob * pop, 1 + st * 0.22, 1 - st * 0.14, ang, true);
+    if (drag && len >= DEAD_ZONE) drawAim(p, pull);
+    if (drag) {
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath(); ctx.arc(p.x, p.y, 7, 0, Math.PI * 2); ctx.fill();
     }
   }
 
+  function drawAim(p, pull) {
+    var len = Math.hypot(pull.x, pull.y), ux = pull.x / len, uy = pull.y / len;
+    var L = 30 + (len / MAX_PULL) * 150;
+    var ex = p.x + ux * L, ey = p.y + uy * L;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 3.5;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(p.x, p.y); ctx.lineTo(ex, ey);
+    var hx = -ux * 15, hy = -uy * 15;
+    ctx.moveTo(ex + hx - uy * 9, ey + hy + ux * 9); ctx.lineTo(ex, ey); ctx.lineTo(ex + hx + uy * 9, ey + hy - ux * 9);
+    ctx.stroke();
+  }
+
   /* First game only: a ghost finger shows the slingshot drag. */
-  function drawTutorial(R) {
+  function drawTutorial() {
     var cyc = (S.time % 2.6) / 2.6;
     var t = cyc < 0.15 ? 0 : cyc < 0.6 ? (cyc - 0.15) / 0.45 : 1;
     var ease = t * t * (3 - 2 * t);
-    var sx = CFG.launchX + 30, sy = 330;
-    var fx2 = sx + 46 * ease, fy = sy - 120 * ease;
+    var sx = CFG.launchX + 30, sy = 360;
+    var fx2 = sx + 46 * ease, fy = sy - 110 * ease;
     var pull = { x: sx - fx2, y: sy - fy };
     var p = spawnPoint(pull);
-    var ax = CFG.launchX - 50, bx = CFG.launchX + 50, ay = CFG.launchY - 4;
-    ctx.strokeStyle = 'rgba(255,170,140,0.85)';
-    ctx.lineWidth = 3;
-    var pl = Math.hypot(pull.x, pull.y) || 1;
-    ctx.beginPath(); ctx.moveTo(ax, ay);
-    ctx.lineTo(p.x - pull.x / pl * R * 0.9, p.y - pull.y / pl * R * 0.9);
-    ctx.lineTo(bx, ay); ctx.stroke();
-    if (ease > 0.05) drawTrajectory(p, pull, R);
+    var R = SB.radiusFor(Math.log2(S.cur));
     var st = Math.hypot(pull.x, pull.y) / MAX_PULL;
-    drawStaticBlob(S.cur, p.x, p.y, R, 1 + st * 0.18, 1 - st * 0.12, Math.atan2(pull.y, pull.x));
+    drawStaticBlob(S.cur, p.x, p.y, R, 1 + st * 0.22, 1 - st * 0.14, Math.atan2(pull.y, pull.x), true);
+    if (ease > 0.05) drawAim(p, pull);
 
     var fade = cyc > 0.85 ? 1 - (cyc - 0.85) / 0.15 : Math.min(1, cyc / 0.1);
     ctx.globalAlpha = fade;
     ctx.setLineDash([5, 6]);
-    ctx.strokeStyle = 'rgba(233,251,255,0.6)';
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
     ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(fx2, fy); ctx.stroke();
     ctx.setLineDash([]);
-    ctx.fillStyle = 'rgba(233,251,255,0.35)';
-    ctx.beginPath(); ctx.arc(fx2, fy, 20, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = '#e9fbff';
+    ctx.fillStyle = 'rgba(255,255,255,0.25)';
+    ctx.beginPath(); ctx.arc(fx2, fy, 18, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = 2.5;
-    ctx.beginPath(); ctx.arc(fx2, fy, 20, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(fx2, fy, 18, 0, Math.PI * 2); ctx.stroke();
     ctx.globalAlpha = 1;
 
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.font = '22px ' + FONT;
-    ctx.lineWidth = 5;
-    ctx.strokeStyle = 'rgba(4,24,42,0.8)';
-    ctx.fillStyle = '#e9fbff';
-    var l1 = 'Drag back like a slingshot', l2 = 'and let go to fling';
-    ctx.strokeText(l1, CFG.W / 2, 400); ctx.fillText(l1, CFG.W / 2, 400);
-    ctx.strokeText(l2, CFG.W / 2, 428); ctx.fillText(l2, CFG.W / 2, 428);
-    ctx.font = '16px ' + FONT;
-    ctx.fillStyle = '#8fd3e8';
-    ctx.strokeText('Tap anywhere for a gentle drop', CFG.W / 2, 462);
-    ctx.fillText('Tap anywhere for a gentle drop', CFG.W / 2, 462);
-  }
-
-  function drawTrajectory(p, pull, R) {
-    var k = MAX_SPEED / MAX_PULL;
-    var vx = pull.x * k, vy = pull.y * k, x = p.x, y = p.y;
-    var dt = 1 / 60;
-    ctx.fillStyle = '#e9fbff';
-    for (var i = 1; i <= 40; i++) {
-      vy += CFG.gravity * dt;
-      x += vx * dt; y += vy * dt;
-      if (x < CFG.wallL + R || x > CFG.wallR - R || y > CFG.floor - R) break;
-      if (i % 3) continue;
-      ctx.globalAlpha = Math.max(0, 0.75 - i / 50);
-      ctx.beginPath(); ctx.arc(x, y, 3.2 - i * 0.04, 0, Math.PI * 2); ctx.fill();
-    }
-    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '17px ' + FONT;
+    ctx.fillText('Drag back like a slingshot', CFG.W / 2, 430);
+    ctx.fillText('and let go to fling', CFG.W / 2, 454);
+    ctx.font = '12px ' + FONT;
+    ctx.fillStyle = '#8c8c8c';
+    ctx.fillText('Tap anywhere for a gentle drop', CFG.W / 2, 486);
   }
 
   function drawFx() {
     for (var i = 0; i < fx.length; i++) {
-      var f = fx[i], a = Math.min(1, f.life / (f.max * 0.5));
-      ctx.globalAlpha = a;
-      if (f.t === 'drop') {
-        ctx.fillStyle = f.c;
-        ctx.beginPath(); ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2); ctx.fill();
-      } else {
-        ctx.strokeStyle = 'rgba(235,250,255,0.85)';
-        ctx.lineWidth = 1.4;
-        ctx.beginPath(); ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2); ctx.stroke();
-      }
+      var f = fx[i];
+      ctx.globalAlpha = Math.min(1, f.life / (f.max * 0.5));
+      ctx.fillStyle = f.c;
+      ctx.beginPath(); ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2); ctx.fill();
     }
     ctx.globalAlpha = 1;
   }
@@ -982,12 +956,13 @@
       ctx.globalAlpha = a;
       ctx.font = (p.size * sc) + 'px ' + FONT;
       ctx.lineWidth = 4;
-      ctx.strokeStyle = 'rgba(4,24,42,0.75)';
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = 'rgba(0,0,0,0.8)';
       ctx.strokeText(p.text, p.x, p.y);
       ctx.fillStyle = p.color;
       ctx.fillText(p.text, p.x, p.y);
       if (p.sub) {
-        ctx.font = '15px ' + FONT;
+        ctx.font = '12px ' + FONT;
         ctx.strokeText(p.sub, p.x, p.y + p.size * 0.8);
         ctx.fillStyle = '#ffffff';
         ctx.fillText(p.sub, p.x, p.y + p.size * 0.8);
@@ -998,30 +973,18 @@
 
   function drawHud() {
     if (S.mode === 'title') return;
-    // Pause button.
-    ctx.fillStyle = 'rgba(4,24,42,0.45)';
-    ctx.beginPath(); ctx.arc(PAUSE_BTN.x, PAUSE_BTN.y, PAUSE_BTN.r, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = 'rgba(230,250,255,0.4)'; ctx.lineWidth = 1.5; ctx.stroke();
-    ctx.fillStyle = '#e9fbff';
-    ctx.fillRect(PAUSE_BTN.x - 7, PAUSE_BTN.y - 8, 5, 16);
-    ctx.fillRect(PAUSE_BTN.x + 2, PAUSE_BTN.y - 8, 5, 16);
-
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'alphabetic';
-    ctx.fillStyle = '#8fd3e8';
-    ctx.font = '13px ' + FONT;
-    ctx.fillText('SCORE', 20, 88);
-    ctx.fillStyle = '#e9fbff';
-    ctx.font = '34px ' + FONT;
-    ctx.fillText(S.score.toLocaleString(), 19, 122);
-    ctx.fillStyle = '#8fd3e8';
-    ctx.font = '13px ' + FONT;
-    ctx.fillText('BEST  ' + S.best.toLocaleString(), 20, 146);
-
+    // Menu button: three bars, as in the original.
+    ctx.fillStyle = '#5a5a5a';
+    for (var i = -1; i <= 1; i++) roundRect(PAUSE_BTN.x - 13, PAUSE_BTN.y + i * 8 - 2.5, 26, 5, 2.5), ctx.fill();
+    if (sideText()) return;
     ctx.textAlign = 'right';
-    ctx.fillText('NEXT', CFG.W - 20, 30);
-    var nR = SB.radiusFor(Math.log2(S.next)) * 0.8;
-    drawStaticBlob(S.next, CFG.W - 20 - 28, 80, nR, 1, 1, 0);
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = '#4a4a4a';
+    ctx.font = '11px ' + FONT;
+    ctx.fillText('BEST ' + S.best.toLocaleString(), CFG.wallR, 30);
+    ctx.fillStyle = '#6e6e6e';
+    ctx.font = '38px ' + FONT;
+    ctx.fillText(S.score.toLocaleString(), CFG.wallR + 2, 80);
   }
 
   /* ---------- main loop ---------- */
@@ -1045,7 +1008,7 @@
   requestAnimationFrame(frame);
 
   if (document.fonts && document.fonts.load) {
-    document.fonts.load('20px "Lilita One"').catch(function () {});
+    document.fonts.load('20px "Audiowide"').catch(function () {});
   }
 
   // Hooks for automated tests.
