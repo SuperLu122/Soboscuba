@@ -313,8 +313,8 @@
     var bar = this.bar;
     if (s.onBar && bar) {
       for (i = 0; i < n; i++) {
-        ax[i] += bar.freq * (bar.y - y[i]) - bar.dampX * vx[i] - bar.inward * (x[i] > 0 ? 1 : x[i] < 0 ? -1 : 0);
-        ay[i] += -bar.dampY * vy[i];
+        ax[i] += -bar.dampX * vx[i] - bar.inward * (x[i] > 0 ? 1 : x[i] < 0 ? -1 : 0);
+        ay[i] += bar.freq * (bar.y - y[i]) - bar.dampY * vy[i];
       }
     }
     if (s.ghostSubas) {
