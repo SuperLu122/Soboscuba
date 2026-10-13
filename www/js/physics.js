@@ -1,602 +1,662 @@
 /*
- * Soft-body physics for Soboscuba.
+ * Soft-body physics for Soboscuba, ported from the original sobosuba's
+ * model (docs/original-spec.md, sections 2, 5, 6, 10 and 17).
  *
- * Every blob is a closed ring of small circular particles. Each substep:
- *   1. Verlet-integrate every particle (gravity + damping).
- *   2. Shape-match each ring back toward its rest circle (gives the jiggle).
- *   3. Resolve particle/particle contacts between different blobs and
- *      particle/wall contacts, using a uniform spatial hash.
- * Particles live in flat typed arrays owned by the World; a Blob stores
- * the offset and count of its slice. The arrays are rebuilt whenever
- * blobs are added or removed (rare: only on launch and merge).
+ * A sobo is a closed ring of small circles (subas, radius 12, mass 1)
+ * plus a heavy invisible "mass ball" tied to the ring's centre by a
+ * spring. Three forces hold it together every substep:
+ *   - skin: neighbouring subas pulled together when stretched past 16 px,
+ *   - area: every suba pushed along its outward normal in proportion to
+ *     the missing area (internal gas pressure),
+ *   - ball spring: the ball chases the ring centre and the ring feels the
+ *     reaction, which is what gives a big sobo its weight.
+ * Contacts are frictionless and inelastic, as in the original (Godot
+ * combines friction with min(), and every suba has friction 0).
+ *
+ * Forces are integrated with semi-implicit Euler; contacts are resolved by
+ * position projection and velocities are taken from the corrected motion.
+ * World units are the original's px, origin at the field centre, y down.
  */
 (function (SB) {
   'use strict';
 
-  var PR = 6;            // particle radius
-  var PD = PR * 2;       // contact distance between two particles
-  var CS = PD;           // spatial hash cell size
+  var SUBA_R = 12;
+  var SPACING = SUBA_R * 2 * (1 - 0.333333);  // rest distance between neighbours
+  var CONTACT = SUBA_R * 2;
+  var CELL = CONTACT;
 
-  var CFG = SB.CONFIG = {
-    W: 420, H: 620,
-    wallL: 22, wallR: 398, floor: 596, ceil: 112,
-    chamfer: 46,           // the tank's bottom corners are cut at 45 degrees
-    dangerY: 214,          // bottom of the launch zone at the top of the tank
-    padY: 270,             // pressure pads: domes on both side walls
-    padR: 40,              // dome radius
-    padIn: 21,             // dome centre sits this far inside the wall
-    launchX: 210, launchY: 166,
-    gravity: 1500,
-    substeps: 8,
-    viscosity: 0.004,
-    reboundDamp: 0.03,
-    spinDamp: 0.04,
-    mergeSlop: 5,
-    shapeStiff: 0.0025,   // pull toward the rest circle per substep (low = squishy)
-    pressure: 0.08,       // how hard each blob keeps its volume (low = packs into gaps)
-    smooth: 0.035,        // pulls each skin particle toward its neighbours' midpoint
-    dt: 1 / 60
+  var CFG = SB.PHYS = {
+    tick: 1 / 60,
+    substeps: 4,
+    iterations: 2,
+    gravity: 150,
+    linearDamp: 0.2,
+    skinFreq: 2300, skinDamp: 9, skinMax: 50000,
+    areaForce: 0.75, areaMax: 8000,
+    ballFreq: 200, ballDamp: 15,
+    bumperR: 64, bumperMass: 10, bumperTravel: 32, bumperFreq: 5, bumperDamp: 7,
+    shockSpeed: 2000, shockImpulse: 100,
+    overlapAccel: 200, overlapTimeout: 3
   };
+  SB.SUBA_R = SUBA_R;
 
-  function radiusFor(level) { return 14 + 6 * level; }   // level 0 is a 1
-  SB.radiusFor = radiusFor;
-  SB.PR = PR;
+  /* ---------- tier table (spec 5.1) ---------- */
+  var TIERS = [];
+  (function () {
+    for (var n = 0; n < 20; n++) {
+      var outerArea = Math.pow(1.26, n) * 3700;
+      var innerR0 = Math.sqrt(outerArea / Math.PI) - SUBA_R;
+      var circ = Math.round(2 * Math.PI * innerR0 / SPACING) * SPACING;
+      var innerR = circ / (2 * Math.PI);
+      var outerR = innerR + SUBA_R;
+      var count = Math.round(circ / SPACING);
+      var oArea = Math.PI * outerR * outerR;
+      var mass = oArea / 350;
+      TIERS.push({
+        tier: n, value: Math.pow(2, n), count: count,
+        innerR: innerR, outerR: outerR, innerArea: Math.PI * innerR * innerR, outerArea: oArea,
+        totalMass: mass, ballMass: mass - count,
+        flash: Math.log(100) * oArea / 60000
+      });
+    }
+  })();
+  SB.TIERS = TIERS;
 
+  /* ---------- sobo ---------- */
   var nextId = 1;
 
-  function Blob(value, cx, cy, vx, vy, startR) {
+  function Sobo(tier, cx, cy) {
+    var d = TIERS[tier];
     this.id = nextId++;
-    this.value = value;
-    this.level = Math.round(Math.log2(value));
-    this.R = radiusFor(this.level);
-    this.growFrom = startR || this.R;
-    this.curR = this.growFrom;
-    this.growT = startR ? 0 : 1;
-    this.n = Math.max(9, Math.ceil(Math.PI * (this.R - PR) / (PR * 0.82)));
-    this.off = -1;
-    this.age = 0;
-    this.angle = 0;
-    this.cx = cx; this.cy = cy;
-    this.vx = vx || 0; this.vy = vy || 0;
+    this.tier = tier;
+    this.value = d.value;
+    this.data = d;
+    var n = this.n = d.count;
+    this.x = new Float64Array(n); this.y = new Float64Array(n);
+    this.vx = new Float64Array(n); this.vy = new Float64Array(n);
+    this.px = new Float64Array(n); this.py = new Float64Array(n);
+    this.nx = new Float64Array(n); this.ny = new Float64Array(n);
+    this.ax = new Float64Array(n); this.ay = new Float64Array(n);
+    this.wall = new Uint8Array(n);      // collides with the field walls
+    this.entering = new Uint8Array(n);  // still crossing in from outside a wall
+    this.ghost = null;                  // overlap recovery: {soboId: true} this ring ignores
+    this.ghostSubas = null;             // Uint8Array, which subas the ghost applies to
+    this.base = new Float64Array(n);    // rest angle of each suba
+    for (var i = 0; i < n; i++) {
+      var a = (i / n) * Math.PI * 2;
+      this.base[i] = a;
+      this.x[i] = cx + Math.cos(a) * d.innerR;
+      this.y[i] = cy + Math.sin(a) * d.innerR;
+      this.wall[i] = 1;
+    }
+    this.bx = cx; this.by = cy; this.bvx = 0; this.bvy = 0;
+    this.cx = cx; this.cy = cy; this.avx = 0; this.avy = 0;
+    this.area = d.innerArea;
+    this.merged = false;       // made by a merge (counts for score)
+    this.allowMerges = true;
+    this.flash = 0; this.flashT = 0;
+    this.onBar = false;        // float bar forces apply
+    this.frozen = false;
     this.dead = false;
-    // Shot tracking for achievements: what a launched blob has touched.
-    this.track = false;
-    this.met = {};
-    this.floorHit = false;
-    this.sideHit = false;
-
-    // Unit directions of the rest shape.
-    this.ux = new Float32Array(this.n);
-    this.uy = new Float32Array(this.n);
-    for (var i = 0; i < this.n; i++) {
-      var a = (i / this.n) * Math.PI * 2;
-      this.ux[i] = Math.cos(a);
-      this.uy[i] = Math.sin(a);
-    }
+    this.touched = false;      // any external contact this tick
+    this.labelAng = 0; this.labelVel = 0;
   }
-  SB.Blob = Blob;
+  SB.Sobo = Sobo;
 
-  function World() {
-    this.blobs = [];
-    this.count = 0;
-    this.cap = 0;
-    this.X = new Float32Array(0); this.Y = new Float32Array(0);
-    this.PX = new Float32Array(0); this.PY = new Float32Array(0);
-    this.owner = new Int32Array(0);
-    var gw = this.gw = Math.ceil(CFG.W / CS) + 1;
-    var gh = this.gh = Math.ceil(CFG.H / CS) + 1;
-    this.cellCount = new Int32Array(gw * gh);
-    this.cellStart = new Int32Array(gw * gh + 1);
-    this.cellOf = new Int32Array(0);
-    this.sorted = new Int32Array(0);
-    this.contacts = [];   // [blobA, blobB] pairs with equal value touching
-    this.contactKeys = {};
-    this.impact = 0;      // strongest blob/blob impact this frame (for sfx)
-    this.padL = 0;        // how hard the pile pushes each side pad this frame
-    this.padR = 0;
-    this.padSink = [0, 0]; // how far each pad has been pushed into its wall (set by the game)
-  }
-  SB.World = World;
-
-  World.prototype.add = function (b) {
-    this.blobs.push(b);
-    this._rebuild();
-    // Place particles on the start ring with the initial velocity.
-    var sdt = CFG.dt / CFG.substeps;
-    var r = b.curR - PR;
-    for (var i = 0; i < b.n; i++) {
-      var k = b.off + i;
-      var d = b.parents ? unionReach(b, i) : r;
-      this.X[k] = b.cx + b.ux[i] * d;
-      this.Y[k] = b.cy + b.uy[i] * d;
-      this.PX[k] = this.X[k] - b.vx * sdt;
-      this.PY[k] = this.Y[k] - b.vy * sdt;
-    }
-    b.parents = null;
-    return b;
+  Sobo.prototype.setVelocity = function (vx, vy) {
+    for (var i = 0; i < this.n; i++) { this.vx[i] = vx; this.vy[i] = vy; }
+    this.bvx = vx; this.bvy = vy;
   };
-
-  /* A merged blob starts on the outline of its two parents (a peanut),
-   * not on a full circle, so it cannot swallow blobs tucked into the
-   * nook between them. Shape matching then inflates it to a circle. */
-  function unionReach(b, i) {
-    var best = PR * 0.5;
-    for (var j = 0; j < b.parents.length; j++) {
-      var p = b.parents[j];
-      var cx = p.x - b.cx, cy = p.y - b.cy, r = p.r - PR;
-      var uc = b.ux[i] * cx + b.uy[i] * cy;
-      var disc = uc * uc - (cx * cx + cy * cy) + r * r;
-      if (disc < 0) continue;
-      var t = uc + Math.sqrt(disc);
-      if (t > best) best = t;
-    }
-    return best;
-  }
-
-  World.prototype.remove = function (b) {
-    b.dead = true;
-    this.blobs = this.blobs.filter(function (o) { return o !== b; });
-    this._rebuild();
+  Sobo.prototype.addVelocity = function (vx, vy) {
+    for (var i = 0; i < this.n; i++) { this.vx[i] += vx; this.vy[i] += vy; }
+    this.bvx += vx; this.bvy += vy;
   };
-
-  World.prototype.clear = function () {
-    this.blobs = [];
-    this._rebuild();
+  Sobo.prototype.setWalls = function (on) {
+    for (var i = 0; i < this.n; i++) this.wall[i] = on ? 1 : 0;
   };
-
-  World.prototype._rebuild = function () {
-    var total = 0, i, b;
-    for (i = 0; i < this.blobs.length; i++) total += this.blobs[i].n;
-    var X = new Float32Array(total), Y = new Float32Array(total);
-    var PX = new Float32Array(total), PY = new Float32Array(total);
-    var owner = new Int32Array(total);
-    var o = 0;
-    for (i = 0; i < this.blobs.length; i++) {
-      b = this.blobs[i];
-      if (b.off >= 0) {
-        X.set(this.X.subarray(b.off, b.off + b.n), o);
-        Y.set(this.Y.subarray(b.off, b.off + b.n), o);
-        PX.set(this.PX.subarray(b.off, b.off + b.n), o);
-        PY.set(this.PY.subarray(b.off, b.off + b.n), o);
-      }
-      b.off = o;
-      for (var j = 0; j < b.n; j++) owner[o + j] = i;
-      o += b.n;
-    }
-    this.X = X; this.Y = Y; this.PX = PX; this.PY = PY;
-    this.owner = owner;
-    this.count = total;
-    this.cellOf = new Int32Array(total);
-    this.sorted = new Int32Array(total);
-  };
-
-  /* Mean position and velocity (px/s) of a blob's particles. */
-  World.prototype.measure = function (b) {
-    var sx = 0, sy = 0, svx = 0, svy = 0, k, end = b.off + b.n;
-    for (k = b.off; k < end; k++) {
-      sx += this.X[k]; sy += this.Y[k];
-      svx += this.X[k] - this.PX[k]; svy += this.Y[k] - this.PY[k];
-    }
-    var inv = 1 / b.n, f = CFG.substeps / CFG.dt;
-    b.cx = sx * inv; b.cy = sy * inv;
-    b.vx = svx * inv * f; b.vy = svy * inv * f;
-  };
-
-  World.prototype.step = function () {
-    var steps = CFG.substeps;
-    var sdt = CFG.dt / steps;
-    var g = CFG.gravity * sdt * sdt;
-    var i, b;
-    this.contacts.length = 0;
-    this.contactKeys = {};
-    this.impact = 0;
-    this.padL = 0; this.padR = 0;
-
-    for (i = 0; i < this.blobs.length; i++) {
-      b = this.blobs[i];
-      b.age += CFG.dt;
-      if (b.growT < 1) {
-        b.growT = Math.min(1, b.growT + CFG.dt / 0.22);
-        b.curR = b.growFrom + (b.R - b.growFrom) * easeOutBack(b.growT);
-      }
-    }
-
-    for (var s = 0; s < steps; s++) {
-      this._integrate(g);
-      this._shapeMatch();
-      for (i = 0; i < this.blobs.length; i++) this.blobs[i].touch = false;
-      this._collide();
-      this._walls();
-      this._contactDamping();
-    }
-
-    for (i = 0; i < this.blobs.length; i++) this.measure(this.blobs[i]);
-    if (this._untangle()) {
-      for (i = 0; i < this.blobs.length; i++) this.measure(this.blobs[i]);
-    }
-    this._nearMerges();
-  };
-
-  /* Equal blobs wedged a hair apart look like they touch, so treat a gap
-   * smaller than mergeSlop as contact for merging. */
-  World.prototype._nearMerges = function () {
-    var bl = this.blobs, X = this.X, Y = this.Y, slop = CFG.mergeSlop;
-    var lim = (PD + slop) * (PD + slop);
-    for (var i = 0; i < bl.length; i++) {
-      for (var j = i + 1; j < bl.length; j++) {
-        var A = bl[i], B = bl[j];
-        if (A.value !== B.value) continue;
-        var key = A.id < B.id ? A.id + ':' + B.id : B.id + ':' + A.id;
-        if (this.contactKeys[key]) continue;
-        var dx = B.cx - A.cx, dy = B.cy - A.cy, reach = A.curR + B.curR + slop;
-        if (dx * dx + dy * dy > reach * reach) continue;
-        var hit = false;
-        for (var a = A.off; a < A.off + A.n && !hit; a++) {
-          for (var b = B.off; b < B.off + B.n; b++) {
-            var ex = X[a] - X[b], ey = Y[a] - Y[b];
-            if (ex * ex + ey * ey < lim) { hit = true; break; }
-          }
-        }
-        if (hit) { this.contactKeys[key] = true; this.contacts.push([A, B]); }
-      }
+  Sobo.prototype.measure = function () {
+    var n = this.n, x = this.x, y = this.y, sx = 0, sy = 0, svx = 0, svy = 0, i;
+    for (i = 0; i < n; i++) { sx += x[i]; sy += y[i]; svx += this.vx[i]; svy += this.vy[i]; }
+    this.cx = sx / n; this.cy = sy / n; this.avx = svx / n; this.avy = svy / n;
+    // Signed area (positive for the ring's winding) and outward normals.
+    var area = 0, j = n - 1;
+    for (i = 0; i < n; i++) { area += x[j] * y[i] - y[j] * x[i]; j = i; }
+    this.area = area / 2;
+    var p = n - 1, e0x = x[0] - x[p], e0y = y[0] - y[p];
+    var l0 = Math.hypot(e0x, e0y) || 1; e0x /= l0; e0y /= l0;
+    for (i = 0; i < n; i++) {
+      var k = i + 1 === n ? 0 : i + 1;
+      var e1x = x[k] - x[i], e1y = y[k] - y[i];
+      var l1 = Math.hypot(e1x, e1y) || 1; e1x /= l1; e1y /= l1;
+      // Edge normal = edge direction turned -90 degrees; average the two.
+      var nx = e0y + e1y, ny = -e0x - e1x, nl = Math.hypot(nx, ny);
+      if (nl < 1e-9) { nx = e1y; ny = -e1x; nl = 1; }
+      this.nx[i] = nx / nl; this.ny[i] = ny / nl;
+      e0x = e1x; e0y = e1y;
     }
   };
-
-  /* Safety net: ring/ring contacts cannot separate two blobs once one ring
-   * has particles inside the other. Find those and push them back out. */
-  World.prototype._untangle = function () {
-    var moved = false, bl = this.blobs;
-    for (var i = 0; i < bl.length; i++) {
-      for (var j = i + 1; j < bl.length; j++) {
-        var A = bl[i], B = bl[j];
-        var dx = B.cx - A.cx, dy = B.cy - A.cy;
-        var lim = A.curR + B.curR - PD;
-        if (dx * dx + dy * dy >= lim * lim) continue;
-        if (this._pushOut(A, B)) moved = true;
-        if (this._pushOut(B, A)) moved = true;
-      }
-    }
-    return moved;
-  };
-
-  World.prototype._inside = function (A, x, y) {
-    var X = this.X, Y = this.Y, o = A.off, n = A.n, inside = false;
-    for (var i = 0, j = n - 1; i < n; j = i++) {
-      var xi = X[o + i], yi = Y[o + i], xj = X[o + j], yj = Y[o + j];
-      if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside;
+  /* Point inside the ring polygon through the suba centres (pad grows it). */
+  Sobo.prototype.contains = function (px, py, pad) {
+    var x = this.x, y = this.y, n = this.n, inside = false, j = n - 1;
+    pad = pad || 0;
+    for (var i = 0; i < n; i++) {
+      var xi = x[i] + this.nx[i] * pad, yi = y[i] + this.ny[i] * pad;
+      var xj = x[j] + this.nx[j] * pad, yj = y[j] + this.ny[j] * pad;
+      if ((yi > py) !== (yj > py) && px < (xj - xi) * (py - yi) / (yj - yi) + xi) inside = !inside;
+      j = i;
     }
     return inside;
   };
-
-  // Distance from A's centre to its particle ring along unit vector (ux, uy).
-  World.prototype._reach = function (A, ux, uy) {
-    var X = this.X, Y = this.Y, best = 0;
-    for (var k = A.off; k < A.off + A.n; k++) {
-      var d = (X[k] - A.cx) * ux + (Y[k] - A.cy) * uy;
-      if (d > best) best = d;
+  /* Reset to a small circle around the centre (spec 5.4). */
+  Sobo.prototype.fixShape = function () {
+    var r = this.data.innerR * 0.5;
+    if (!isFinite(this.cx) || !isFinite(this.cy)) { this.cx = this.bx; this.cy = this.by; }
+    if (!isFinite(this.cx) || !isFinite(this.cy)) { this.cx = 0; this.cy = 0; }
+    for (var i = 0; i < this.n; i++) {
+      this.x[i] = this.cx + Math.cos(this.base[i]) * r;
+      this.y[i] = this.cy + Math.sin(this.base[i]) * r;
+      this.vx[i] = 0; this.vy[i] = 0;
     }
-    return best;
+    this.bx = this.cx; this.by = this.cy; this.bvx = 0; this.bvy = 0;
+    this.measure();
+  };
+  Sobo.prototype.blownUp = function () {
+    var d = this.data, max2 = 2000 * 2000;
+    if (!(this.area > 0) || this.area > d.innerArea * 1.8) return true;
+    if (!isFinite(this.cx + this.cy + this.bx + this.by + this.bvx + this.bvy)) return true;
+    if (this.bvx * this.bvx + this.bvy * this.bvy > max2) return true;
+    var edge2 = SPACING * SPACING * 4.5 * 4.5, rad2 = d.innerR * d.innerR * 9;
+    var j = this.n - 1;
+    for (var i = 0; i < this.n; i++) {
+      var vx = this.vx[i], vy = this.vy[i];
+      if (!isFinite(this.x[i] + this.y[i] + vx + vy)) return true;
+      if (vx * vx + vy * vy > max2) return true;
+      var dx = this.x[i] - this.cx, dy = this.y[i] - this.cy;
+      if (dx * dx + dy * dy > rad2) return true;
+      dx = this.x[i] - this.x[j]; dy = this.y[i] - this.y[j];
+      if (dx * dx + dy * dy > edge2) return true;
+      j = i;
+    }
+    return false;
   };
 
-  World.prototype._pushOut = function (A, B) {
-    var X = this.X, Y = this.Y, PX = this.PX, PY = this.PY, k, ux, uy, d;
-    var lim2 = (A.curR + PR) * (A.curR + PR);
-    if (this._inside(A, B.cx, B.cy)) {
-      // B is mostly inside A: move all of B out along the centre line.
-      ux = B.cx - A.cx; uy = B.cy - A.cy;
-      d = Math.sqrt(ux * ux + uy * uy);
-      if (d < 1e-3) { ux = 0; uy = -1; d = 0; } else { ux /= d; uy /= d; }
-      var need = this._reach(A, ux, uy) + B.curR - d;
-      if (need <= 0) return false;
-      for (k = B.off; k < B.off + B.n; k++) {
-        X[k] += ux * need; Y[k] += uy * need;
-        PX[k] += ux * need; PY[k] += uy * need;
-      }
-      B.cx += ux * need; B.cy += uy * need;
-      return true;
+  /* ---------- world ---------- */
+  function World() {
+    this.sobos = [];
+    this.edges = [];          // field walls: {px, py, nx, ny} with inward normal
+    this.bumpers = [];
+    this.bar = null;          // {y, freq, dampX, dampY, inward}
+    this.shocks = [];
+    this.recoveries = [];
+    this.pairs = [];          // same-tier contacts this tick: {a, b, ia, ib, y}
+    this._pairKeys = {};
+    this.impact = 0;          // hardest suba hit this tick (for sound)
+    this.scan = 0;
+    this._hash = { cell: new Map() };
+  }
+  SB.World = World;
+
+  /* Field walls from a convex polygon (any winding). */
+  World.prototype.setField = function (pts) {
+    var cx = 0, cy = 0, i;
+    for (i = 0; i < pts.length; i++) { cx += pts[i][0]; cy += pts[i][1]; }
+    cx /= pts.length; cy /= pts.length;
+    this.edges = [];
+    for (i = 0; i < pts.length; i++) {
+      var a = pts[i], b = pts[(i + 1) % pts.length];
+      var ex = b[0] - a[0], ey = b[1] - a[1], l = Math.hypot(ex, ey);
+      var nx = -ey / l, ny = ex / l;
+      if ((cx - a[0]) * nx + (cy - a[1]) * ny < 0) { nx = -nx; ny = -ny; }
+      this.edges.push({ px: a[0], py: a[1], nx: nx, ny: ny });
     }
-    var moved = false;
-    for (k = B.off; k < B.off + B.n; k++) {
-      ux = X[k] - A.cx; uy = Y[k] - A.cy;
-      var d2 = ux * ux + uy * uy;
-      if (d2 > lim2 || !this._inside(A, X[k], Y[k])) continue;
-      d = Math.sqrt(d2) || 1;
-      ux /= d; uy /= d;
-      var out = this._reach(A, ux, uy) + PR - d;
-      if (out <= 0) continue;
-      X[k] += ux * out; Y[k] += uy * out;
-      PX[k] += ux * out; PY[k] += uy * out;
-      moved = true;
-    }
-    return moved;
+    this.field = pts;
   };
 
-  World.prototype._integrate = function (g) {
-    var X = this.X, Y = this.Y, PX = this.PX, PY = this.PY;
-    var maxD = PR * 0.85, damp = 0.9993;
-    for (var k = 0; k < this.count; k++) {
-      var vx = (X[k] - PX[k]) * damp;
-      var vy = (Y[k] - PY[k]) * damp + g;
-      var d2 = vx * vx + vy * vy;
-      if (d2 > maxD * maxD) {
-        var sc = maxD / Math.sqrt(d2);
-        vx *= sc; vy *= sc;
-      }
-      PX[k] = X[k]; PY[k] = Y[k];
-      X[k] += vx; Y[k] += vy;
-    }
+  /* A bumper slides along x from its rest position outward by `travel`. */
+  World.prototype.addBumper = function (x, y, dir) {
+    var b = { restX: x, x: x, y: y, vx: 0, dir: dir, r: CFG.bumperR, locked: false, touch: false };
+    this.bumpers.push(b);
+    return b;
   };
 
-  World.prototype._shapeMatch = function () {
-    var X = this.X, Y = this.Y;
-    for (var bi = 0; bi < this.blobs.length; bi++) {
-      var b = this.blobs[bi], o = b.off, n = b.n, k, i;
-      var cx = 0, cy = 0;
-      for (k = o; k < o + n; k++) { cx += X[k]; cy += Y[k]; }
-      cx /= n; cy /= n;
-      // Best-fit rotation of the rest shape onto the current shape.
-      var A = 0, B = 0;
-      for (i = 0; i < n; i++) {
-        var rx = X[o + i] - cx, ry = Y[o + i] - cy;
-        A += b.ux[i] * rx + b.uy[i] * ry;
-        B += b.ux[i] * ry - b.uy[i] * rx;
-      }
-      var ang = Math.atan2(B, A);
-      b.angle = ang;
-      var c = Math.cos(ang), sn = Math.sin(ang);
-      var r = b.curR - PR;
-      // Low shape stiffness so blobs sag and squash like mochi. Bigger blobs
-      // are a little softer still. Volume is kept by the pressure pass below.
-      var stiff = CFG.shapeStiff * (1.15 - Math.min(0.45, b.level * 0.04));
-      for (i = 0; i < n; i++) {
-        k = o + i;
-        var qx = b.ux[i] * r, qy = b.uy[i] * r;
-        var gx = cx + c * qx - sn * qy;
-        var gy = cy + sn * qx + c * qy;
-        var ex = gx - X[k], ey = gy - Y[k];
-        X[k] += ex * stiff;
-        Y[k] += ey * stiff;
-      }
-
-      // Smoothing (a bending term): keeps the outline round and free of
-      // lumps while the shape as a whole squashes. Shrinks area slightly,
-      // which the pressure pass restores.
-      var sm = CFG.smooth, px0 = X[o + n - 1], py0 = Y[o + n - 1], fx = X[o], fy = Y[o];
-      for (i = 0; i < n; i++) {
-        k = o + i;
-        var nxp = i === n - 1 ? fx : X[k + 1], nyp = i === n - 1 ? fy : Y[k + 1];
-        var curx = X[k], cury = Y[k];
-        X[k] += ((px0 + nxp) * 0.5 - curx) * sm;
-        Y[k] += ((py0 + nyp) * 0.5 - cury) * sm;
-        px0 = curx; py0 = cury;
-      }
-
-      // Pressure: keep the ring's enclosed area at its rest area, pushing
-      // each particle along its outward normal (position-based area
-      // constraint). This is what lets a squashed blob bulge sideways.
-      var area = 0;
-      for (i = 0; i < n; i++) {
-        var p1 = o + i, p2 = o + (i + 1) % n;
-        area += X[p1] * Y[p2] - X[p2] * Y[p1];
-      }
-      area *= 0.5;
-      var rest = 0.5 * n * r * r * Math.sin(2 * Math.PI / n);
-      var gsum = 0, gxs = this._gx, gys = this._gy;
-      if (!gxs || gxs.length < n) { gxs = this._gx = new Float32Array(512); gys = this._gy = new Float32Array(512); }
-      for (i = 0; i < n; i++) {
-        var pn = o + (i + 1) % n, pp = o + (i + n - 1) % n;
-        gxs[i] = 0.5 * (Y[pn] - Y[pp]);
-        gys[i] = 0.5 * (X[pp] - X[pn]);
-        gsum += gxs[i] * gxs[i] + gys[i] * gys[i];
-      }
-      if (gsum > 1e-6) {
-        var lam = (rest - area) / gsum * CFG.pressure;
-        for (i = 0; i < n; i++) { X[o + i] += gxs[i] * lam; Y[o + i] += gys[i] * lam; }
-      }
-
-      // Skin: adjacent ring particles may not drift apart far enough to let
-      // another blob's particle slip between them.
-      // (A gap of up to 1.25 particle diameters still leaves the midpoint
-      // closer than one diameter to both neighbours, so nothing fits through.)
-      var maxSep = PD * 1.25;
-      for (i = 0; i < n; i++) {
-        var a1 = o + i, a2 = o + (i + 1) % n;
-        var sx = X[a2] - X[a1], sy = Y[a2] - Y[a1];
-        var sd = Math.sqrt(sx * sx + sy * sy);
-        if (sd > maxSep) {
-          var corr = (sd - maxSep) / sd * 0.5;
-          X[a1] += sx * corr; Y[a1] += sy * corr;
-          X[a2] -= sx * corr; Y[a2] -= sy * corr;
-        }
-      }
-
-      // Jelly viscosity: damp each particle's velocity relative to the
-      // blob's mean velocity. Soaks up spring-back bounce and rolling while
-      // leaving a short visible wobble.
-      var PX = this.PX, PY = this.PY, mvx = 0, mvy = 0;
-      for (k = o; k < o + n; k++) { mvx += X[k] - PX[k]; mvy += Y[k] - PY[k]; }
-      mvx /= n; mvy /= n;
-      var vd = CFG.viscosity;
-      for (k = o; k < o + n; k++) {
-        PX[k] += ((X[k] - PX[k]) - mvx) * vd;
-        PY[k] += ((Y[k] - PY[k]) - mvy) * vd;
-      }
+  World.prototype.add = function (s) { this.sobos.push(s); s.measure(); return s; };
+  World.prototype.remove = function (s) {
+    s.dead = true;
+    var i = this.sobos.indexOf(s);
+    if (i >= 0) this.sobos.splice(i, 1);
+  };
+  World.prototype.clear = function () {
+    this.sobos.length = 0; this.shocks.length = 0; this.recoveries.length = 0;
+    for (var i = 0; i < this.bumpers.length; i++) {
+      var b = this.bumpers[i]; b.x = b.restX; b.vx = 0; b.locked = false;
     }
   };
 
-  World.prototype._collide = function () {
-    var X = this.X, Y = this.Y, PX = this.PX, PY = this.PY;
-    var gw = this.gw, gh = this.gh, n = this.count;
-    var cellCount = this.cellCount, cellStart = this.cellStart;
-    var cellOf = this.cellOf, sorted = this.sorted, owner = this.owner;
-    var blobs = this.blobs, k, c;
+  World.prototype.step = function () {
+    var dt = CFG.tick, sub = CFG.substeps, h = dt / sub, i, s;
+    this.pairs.length = 0; this._pairKeys = {};
+    this.impact = 0;
+    for (i = 0; i < this.sobos.length; i++) this.sobos[i].touched = false;
+    for (i = 0; i < this.bumpers.length; i++) this.bumpers[i].touch = false;
 
-    cellCount.fill(0);
-    for (k = 0; k < n; k++) {
-      var gx = (X[k] / CS) | 0, gy = (Y[k] / CS) | 0;
-      if (gx < 0) gx = 0; else if (gx >= gw) gx = gw - 1;
-      if (gy < 0) gy = 0; else if (gy >= gh) gy = gh - 1;
-      c = gy * gw + gx;
-      cellOf[k] = c;
-      cellCount[c]++;
+    for (var st = 0; st < sub; st++) {
+      for (i = 0; i < this.sobos.length; i++) {
+        s = this.sobos[i];
+        if (s.frozen) continue;
+        s.measure();
+        this._forces(s, h);
+      }
+      this._bumperForces(h);
+      this._move(h);
+      for (var it = 0; it < CFG.iterations; it++) {
+        this._collide(it === CFG.iterations - 1);
+        this._walls();
+      }
+      this._settle(h);
     }
-    cellStart[0] = 0;
-    for (c = 0; c < gw * gh; c++) cellStart[c + 1] = cellStart[c] + cellCount[c];
-    for (c = 0; c < gw * gh; c++) cellCount[c] = cellStart[c];
-    for (k = 0; k < n; k++) sorted[cellCount[cellOf[k]]++] = k;
 
-    var friction = 0.08;
-    for (k = 0; k < n; k++) {
-      var cc = cellOf[k];
-      var cx0 = cc % gw, cy0 = (cc / gw) | 0;
-      var ok = owner[k];
-      for (var dy = -1; dy <= 1; dy++) {
-        var yy = cy0 + dy;
-        if (yy < 0 || yy >= gh) continue;
-        for (var dx = -1; dx <= 1; dx++) {
-          var xx = cx0 + dx;
-          if (xx < 0 || xx >= gw) continue;
-          var cell = yy * gw + xx;
-          for (var t = cellStart[cell], end = cellStart[cell + 1]; t < end; t++) {
-            var q = sorted[t];
-            if (q <= k) continue;
-            var oq = owner[q];
-            if (oq === ok) continue;
-            var ddx = X[q] - X[k], ddy = Y[q] - Y[k];
-            var d2 = ddx * ddx + ddy * ddy;
-            if (d2 >= PD * PD || d2 < 1e-8) continue;
-            var d = Math.sqrt(d2);
-            var nx = ddx / d, ny = ddy / d;
-            var push = (PD - d) * 0.5;
-            X[k] -= nx * push; Y[k] -= ny * push;
-            X[q] += nx * push; Y[q] += ny * push;
+    for (i = 0; i < this.sobos.length; i++) {
+      s = this.sobos[i];
+      s.measure();
+      if (s.flash > 0) {
+        s.flashT += dt;
+        var t = s.flashT / s.data.flash;
+        s.flash = t >= 1 ? 0 : 1 - t * t;
+      }
+      if (!s.frozen && s.blownUp()) s.fixShape();
+    }
+    this._shockwaves(dt);
+    this._overlaps(dt);
+  };
 
-            // Tangential friction: pull the two velocities together.
-            var rvx = (X[q] - PX[q]) - (X[k] - PX[k]);
-            var rvy = (Y[q] - PY[q]) - (Y[k] - PY[k]);
-            var rn = rvx * nx + rvy * ny;
-            var tx = rvx - rn * nx, ty = rvy - rn * ny;
-            PX[k] -= tx * friction; PY[k] -= ty * friction;
-            PX[q] += tx * friction; PY[q] += ty * friction;
-            if (-rn > this.impact) this.impact = -rn;
+  /* Accelerations from gravity, damping, skin, area, the ball spring and the bar. */
+  World.prototype._forces = function (s, h) {
+    var n = s.n, x = s.x, y = s.y, vx = s.vx, vy = s.vy, ax = s.ax, ay = s.ay, i, j;
+    var g = CFG.gravity;
+    for (i = 0; i < n; i++) { ax[i] = 0; ay[i] = g; }
 
-            var A = blobs[ok], B = blobs[oq];
-            A.touch = B.touch = true;
-            if (A.track) A.met[B.id] = 1;
-            if (B.track) B.met[A.id] = 1;
-            if (A.value === B.value) {
-              var key = A.id < B.id ? A.id + ':' + B.id : B.id + ':' + A.id;
-              if (!this.contactKeys[key]) {
-                this.contactKeys[key] = true;
-                this.contacts.push([A, B]);
+    // Skin: only resists stretching.
+    j = n - 1;
+    for (i = 0; i < n; i++) {
+      var dx = x[i] - x[j], dy = y[i] - y[j], d = Math.sqrt(dx * dx + dy * dy);
+      if (d > SPACING) {
+        var ux = dx / d, uy = dy / d;
+        var f = CFG.skinFreq * (d - SPACING) + CFG.skinDamp * ((vx[i] - vx[j]) * ux + (vy[i] - vy[j]) * uy);
+        if (f > CFG.skinMax) f = CFG.skinMax; else if (f < -CFG.skinMax) f = -CFG.skinMax;
+        ax[j] += f * ux; ay[j] += f * uy;
+        ax[i] -= f * ux; ay[i] -= f * uy;
+      }
+      j = i;
+    }
+
+    // Area: push out along the normals by the missing area, net force zero.
+    var diff = s.data.innerArea - s.area, mx = 0, my = 0, fx, fy, fm;
+    for (i = 0; i < n; i++) {
+      fx = CFG.areaForce * diff * s.nx[i]; fy = CFG.areaForce * diff * s.ny[i];
+      fm = Math.sqrt(fx * fx + fy * fy);
+      if (fm > CFG.areaMax) { fx *= CFG.areaMax / fm; fy *= CFG.areaMax / fm; }
+      s.nx[i] = fx; s.ny[i] = fy;   // reuse as scratch; measure() refreshes them
+      mx += fx; my += fy;
+    }
+    mx /= n; my /= n;
+    for (i = 0; i < n; i++) { ax[i] += s.nx[i] - mx; ay[i] += s.ny[i] - my; }
+
+    // Mass ball spring, with the reaction shared by the ring.
+    var M = s.data.ballMass;
+    var bfx = (CFG.ballFreq * (s.cx - s.bx) + CFG.ballDamp * (s.avx - s.bvx)) * M;
+    var bfy = (CFG.ballFreq * (s.cy - s.by) + CFG.ballDamp * (s.avy - s.bvy)) * M;
+    var rx = -bfx / n, ry = -bfy / n;
+    for (i = 0; i < n; i++) { ax[i] += rx; ay[i] += ry; }
+    var bax = bfx / M, bay = bfy / M + g;
+
+    // Float bar: vertical spring to the bar line, damping, push to the middle.
+    var bar = this.bar;
+    if (s.onBar && bar) {
+      for (i = 0; i < n; i++) {
+        ax[i] += bar.freq * (bar.y - y[i]) - bar.dampX * vx[i] - bar.inward * (x[i] > 0 ? 1 : x[i] < 0 ? -1 : 0);
+        ay[i] += -bar.dampY * vy[i];
+      }
+    }
+    if (s.ghostSubas) {
+      // Overlap recovery: stuck subas crawl back toward their own centre.
+      for (i = 0; i < n; i++) {
+        if (!s.ghostSubas[i]) continue;
+        var ox = s.cx - x[i], oy = s.cy - y[i], ol = Math.hypot(ox, oy) || 1;
+        ax[i] += ox / ol * CFG.overlapAccel; ay[i] += oy / ol * CFG.overlapAccel;
+      }
+    }
+    if (s.push) { for (i = 0; i < n; i++) { ax[i] += s.push[0]; ay[i] += s.push[1]; } bax += s.push[0]; bay += s.push[1]; }
+
+    // Integrate velocities (semi-implicit Euler) with Godot's linear damp.
+    var damp = Math.max(0, 1 - h * CFG.linearDamp);
+    for (i = 0; i < n; i++) {
+      vx[i] = (vx[i] + ax[i] * h) * damp;
+      vy[i] = (vy[i] + ay[i] * h) * damp;
+    }
+    s.bvx = (s.bvx + bax * h) * damp;
+    s.bvy = (s.bvy + bay * h) * damp;
+  };
+
+  World.prototype._bumperForces = function (h) {
+    for (var i = 0; i < this.bumpers.length; i++) {
+      var b = this.bumpers[i];
+      if (b.locked) { b.vx = 0; continue; }
+      var a = CFG.bumperFreq * (b.restX - b.x) - CFG.bumperDamp * b.vx;
+      b.vx += a * h;
+      b.px = b.x;
+      b.x += b.vx * h;
+      this._clampBumper(b);
+    }
+  };
+  World.prototype._clampBumper = function (b) {
+    var far = b.restX + b.dir * CFG.bumperTravel;
+    var lo = Math.min(b.restX, far), hi = Math.max(b.restX, far);
+    if (b.x < lo) b.x = lo; else if (b.x > hi) b.x = hi;
+  };
+
+  World.prototype._move = function (h) {
+    for (var k = 0; k < this.sobos.length; k++) {
+      var s = this.sobos[k];
+      if (s.frozen) continue;
+      for (var i = 0; i < s.n; i++) {
+        s.px[i] = s.x[i]; s.py[i] = s.y[i];
+        s.x[i] += s.vx[i] * h; s.y[i] += s.vy[i] * h;
+      }
+      s.bx += s.bvx * h; s.by += s.bvy * h;
+    }
+  };
+
+  /* Velocities from the corrected motion (inelastic, frictionless contacts). */
+  World.prototype._settle = function (h) {
+    var inv = 1 / h, k, i;
+    for (k = 0; k < this.sobos.length; k++) {
+      var s = this.sobos[k];
+      if (s.frozen) continue;
+      for (i = 0; i < s.n; i++) {
+        s.vx[i] = (s.x[i] - s.px[i]) * inv;
+        s.vy[i] = (s.y[i] - s.py[i]) * inv;
+      }
+    }
+    for (k = 0; k < this.bumpers.length; k++) {
+      var b = this.bumpers[k];
+      if (!b.locked && b.px !== undefined) b.vx = (b.x - b.px) * inv;
+    }
+  };
+
+  /* Suba against suba, through a spatial hash. Adjacent subas of one ring
+   * never collide; other subas of the same ring do, so rings cannot fold. */
+  World.prototype._collide = function (record) {
+    var sobos = this.sobos, map = this._hash.cell, k, i, s;
+    map.clear();
+    var total = 0;
+    for (k = 0; k < sobos.length; k++) {
+      s = sobos[k];
+      for (i = 0; i < s.n; i++) {
+        var key = (Math.floor(s.x[i] / CELL) + 512) * 4096 + (Math.floor(s.y[i] / CELL) + 512);
+        var list = map.get(key);
+        if (!list) { list = []; map.set(key, list); }
+        list.push(k, i);
+        total++;
+      }
+    }
+    var C2 = CONTACT * CONTACT;
+    for (k = 0; k < sobos.length; k++) {
+      var A = sobos[k];
+      for (i = 0; i < A.n; i++) {
+        var gx = Math.floor(A.x[i] / CELL) + 512, gy = Math.floor(A.y[i] / CELL) + 512;
+        for (var ox = -1; ox <= 1; ox++) {
+          for (var oy = -1; oy <= 1; oy++) {
+            var cell = map.get((gx + ox) * 4096 + gy + oy);
+            if (!cell) continue;
+            for (var c = 0; c < cell.length; c += 2) {
+              var kb = cell[c], j = cell[c + 1];
+              if (kb < k || (kb === k && j <= i)) continue;
+              var B = sobos[kb];
+              if (kb === k) {
+                var dn = j - i;
+                if (dn === 1 || dn === A.n - 1) continue;
+              } else if (A.ghost || B.ghost) {
+                if ((A.ghost && A.ghost[B.id] && A.ghostSubas[i]) || (B.ghost && B.ghost[A.id] && B.ghostSubas[j])) continue;
+              }
+              var dx = B.x[j] - A.x[i], dy = B.y[j] - A.y[i], d2 = dx * dx + dy * dy;
+              if (d2 >= C2 || d2 < 1e-12) continue;
+              var d = Math.sqrt(d2), nx = dx / d, ny = dy / d, p = (CONTACT - d) * 0.5;
+              var fa = A.frozen ? 0 : B.frozen ? 2 : 1, fb = B.frozen ? 0 : A.frozen ? 2 : 1;
+              A.x[i] -= nx * p * fa; A.y[i] -= ny * p * fa;
+              B.x[j] += nx * p * fb; B.y[j] += ny * p * fb;
+              if (kb !== k && record) {
+                A.touched = B.touched = true;
+                var rv = (A.vx[i] - B.vx[j]) * nx + (A.vy[i] - B.vy[j]) * ny;
+                if (rv > this.impact) this.impact = rv;
+                if (A.tier === B.tier) {
+                  var pk = A.id < B.id ? A.id * 65536 + B.id : B.id * 65536 + A.id;
+                  var my = (A.y[i] + B.y[j]) / 2, prev = this._pairKeys[pk];
+                  if (prev === undefined) {
+                    this._pairKeys[pk] = this.pairs.length;
+                    this.pairs.push({ a: A, b: B, ia: i, ib: j, y: my });
+                  } else if (my > this.pairs[prev].y) {
+                    var pr = this.pairs[prev]; pr.a = A; pr.b = B; pr.ia = i; pr.ib = j; pr.y = my;
+                  }
+                }
               }
             }
           }
         }
       }
     }
+    this.count = total;
   };
 
+  /* Field walls (only for subas whose wall collision is on) and bumpers. */
   World.prototype._walls = function () {
-    var X = this.X, Y = this.Y, PX = this.PX, PY = this.PY;
-    var L = CFG.wallL + PR, Rr = CFG.wallR - PR;
-    var F = CFG.floor - PR, T = CFG.ceil + PR;
-    var wf = 0.25, owner = this.owner, blobs = this.blobs;
-    var C = CFG.chamfer - PR * (2 - Math.SQRT2), S2 = Math.SQRT1_2;
-    // Pressure pads: circles centred just inside each wall.
-    var py = CFG.padY, pr = CFG.padR + PR;
-    var plx = CFG.wallL - CFG.padIn - this.padSink[0], prx = CFG.wallR + CFG.padIn + this.padSink[1];
-    for (var k = 0; k < this.count; k++) {
-      var hit = 0, dx, dy, d2, d, pen;
-      if (X[k] < L) { X[k] = L; PY[k] += (Y[k] - PY[k]) * wf; hit = 1; }
-      else if (X[k] > Rr) { X[k] = Rr; PY[k] += (Y[k] - PY[k]) * wf; hit = 1; }
-      if (Y[k] > F) { Y[k] = F; PX[k] += (X[k] - PX[k]) * wf; hit = 2; }
-      else if (Y[k] < T) { Y[k] = T; hit = 2; }
-
-      // Cut corners: push back across the 45 degree edge.
-      pen = C - ((X[k] - L) + (F - Y[k]));
-      if (pen > 0) { pen *= 0.5; X[k] += pen; Y[k] -= pen; slide(k, S2, -S2); hit = 2; }
-      pen = C - ((Rr - X[k]) + (F - Y[k]));
-      if (pen > 0) { pen *= 0.5; X[k] -= pen; Y[k] -= pen; slide(k, -S2, -S2); hit = 2; }
-
-      dy = Y[k] - py;
-      if (dy > -pr && dy < pr) {
-        dx = X[k] - plx; d2 = dx * dx + dy * dy;
-        if (d2 < pr * pr) {
-          d = Math.sqrt(d2) || 1; pen = pr - d;
-          this.padL += pen;
-          X[k] += dx / d * pen; Y[k] += dy / d * pen; slide(k, dx / d, dy / d); hit = 1;
+    var edges = this.edges, bumpers = this.bumpers, R = SUBA_R;
+    for (var k = 0; k < this.sobos.length; k++) {
+      var s = this.sobos[k];
+      if (s.frozen) continue;
+      var x = s.x, y = s.y;
+      for (var i = 0; i < s.n; i++) {
+        if (s.wall[i]) {
+          for (var e = 0; e < edges.length; e++) {
+            var E = edges[e];
+            var d = (x[i] - E.px) * E.nx + (y[i] - E.py) * E.ny;
+            if (d < R) { x[i] += E.nx * (R - d); y[i] += E.ny * (R - d); s.touched = true; }
+          }
         }
-        dx = X[k] - prx; d2 = dx * dx + dy * dy;
-        if (d2 < pr * pr) {
-          d = Math.sqrt(d2) || 1; pen = pr - d;
-          this.padR += pen;
-          X[k] += dx / d * pen; Y[k] += dy / d * pen; slide(k, dx / d, dy / d); hit = 1;
+        for (var b = 0; b < bumpers.length; b++) {
+          var B = bumpers[b];
+          var dx = x[i] - B.x, dy = y[i] - B.y, d2 = dx * dx + dy * dy, lim = B.r + R;
+          if (d2 >= lim * lim) continue;
+          var dd = Math.sqrt(d2) || 1, pen = lim - dd, ux = dx / dd, uy = dy / dd;
+          // Suba (mass 1) against the bumper (mass 10, free only along x).
+          var wB = B.locked ? 0 : ux * ux / CFG.bumperMass, lam = pen / (1 + wB);
+          x[i] += ux * lam; y[i] += uy * lam;
+          if (wB > 0) { B.x -= ux * lam / CFG.bumperMass; this._clampBumper(B); }
+          B.touch = true; s.touched = true;
         }
       }
-      if (hit) {
-        var hb = blobs[owner[k]];
-        hb.touch = true;
-        if (hb.track) { if (hit === 1) hb.sideHit = true; else hb.floorHit = true; }
-      }
-    }
-    // Friction along a slanted or curved surface with normal (nx, ny).
-    function slide(k, nx, ny) {
-      var vx = X[k] - PX[k], vy = Y[k] - PY[k];
-      var vn = vx * nx + vy * ny;
-      PX[k] += (vx - vn * nx) * wf;
-      PY[k] += (vy - vn * ny) * wf;
     }
   };
 
-  /* Jelly does not rebound like rubber. While a blob is touching anything,
-   * damp the rebound of its centre of mass (upward motion and motion away
-   * from the side walls) and its spin, so shots land where they are aimed
-   * instead of bouncing and rolling away. */
-  World.prototype._contactDamping = function () {
-    var X = this.X, Y = this.Y, PX = this.PX, PY = this.PY;
-    var up = CFG.reboundDamp, spin = CFG.spinDamp;
-    for (var bi = 0; bi < this.blobs.length; bi++) {
-      var b = this.blobs[bi];
-      if (!b.touch) continue;
-      var o = b.off, n = b.n, k, cx = 0, cy = 0, vx = 0, vy = 0;
-      for (k = o; k < o + n; k++) {
-        cx += X[k]; cy += Y[k];
-        vx += X[k] - PX[k]; vy += Y[k] - PY[k];
-      }
-      cx /= n; cy /= n; vx /= n; vy /= n;
-      var dvx = 0, dvy = vy < 0 ? vy * up : 0;
-      if ((vx > 0 && cx < CFG.wallL + b.curR + 2) || (vx < 0 && cx > CFG.wallR - b.curR - 2)) dvx = vx * up;
-      // Angular velocity about the centre.
-      var num = 0, den = 0;
-      for (k = o; k < o + n; k++) {
-        var rx = X[k] - cx, ry = Y[k] - cy;
-        var ux = X[k] - PX[k] - vx, uy = Y[k] - PY[k] - vy;
-        num += rx * uy - ry * ux; den += rx * rx + ry * ry;
-      }
-      var w = den > 0 ? (num / den) * spin : 0;
-      for (k = o; k < o + n; k++) {
-        PX[k] += dvx - w * (Y[k] - cy);
-        PY[k] += dvy + w * (X[k] - cx);
+  /* Expanding shockwave from a merge: each suba it reaches gets one kick
+   * outward, worth 100 px/s per second of remaining life (spec 17). */
+  World.prototype.shock = function (x, y, life) {
+    this.shocks.push({ x: x, y: y, life: life, r: 0, hit: {} });
+  };
+  World.prototype._shockwaves = function (dt) {
+    for (var w = this.shocks.length - 1; w >= 0; w--) {
+      var S = this.shocks[w];
+      S.life -= dt;
+      S.r += CFG.shockSpeed * dt;
+      if (S.life <= 0) { this.shocks.splice(w, 1); continue; }
+      var lim = S.r + SUBA_R, lim2 = lim * lim, kick = S.life * CFG.shockImpulse;
+      for (var k = 0; k < this.sobos.length; k++) {
+        var s = this.sobos[k];
+        if (s.frozen) continue;
+        for (var i = 0; i < s.n; i++) {
+          var dx = s.x[i] - S.x, dy = s.y[i] - S.y, d2 = dx * dx + dy * dy;
+          if (d2 > lim2) continue;
+          var key = s.id * 1024 + i;
+          if (S.hit[key]) continue;
+          S.hit[key] = 1;
+          var d = Math.sqrt(d2) || 1;
+          s.vx[i] += dx / d * kick; s.vy[i] += dy / d * kick;
+        }
       }
     }
   };
 
-  /* Outer outline points (particle centre pushed out by its radius). */
-  World.prototype.outline = function (b, out) {
-    var X = this.X, Y = this.Y;
-    for (var i = 0; i < b.n; i++) {
-      var k = b.off + i;
-      var dx = X[k] - b.cx, dy = Y[k] - b.cy;
-      var d = Math.sqrt(dx * dx + dy * dy) || 1;
-      out[i * 2] = X[k] + dx / d * PR;
-      out[i * 2 + 1] = Y[k] + dy / d * PR;
+  /* Overlap recovery (spec 5.4): a suba that ended up inside another sobo
+   * stops colliding with it and crawls back toward its own centre. */
+  World.prototype._overlaps = function (dt) {
+    var sobos = this.sobos, i, k, r;
+    // Scan a fifteenth of the sobos each tick.
+    var step = 15, start = this.scan % step;
+    this.scan++;
+    for (k = start; k < sobos.length; k += step) {
+      var A = sobos[k];
+      for (var m = 0; m < sobos.length; m++) {
+        var B = sobos[m];
+        if (B === A) continue;
+        var dx = B.cx - A.cx, dy = B.cy - A.cy, reach = A.data.outerR + B.data.outerR;
+        if (dx * dx + dy * dy > reach * reach) continue;
+        if (this._recovering(A, B)) continue;
+        var inA = null, inB = null;
+        for (i = 0; i < A.n; i++) if (B.contains(A.x[i], A.y[i])) { (inA = inA || []).push(i); }
+        if (!inA) continue;
+        for (i = 0; i < B.n; i++) if (A.contains(B.x[i], B.y[i])) { (inB = inB || []).push(i); }
+        this._startRecovery(A, B, inA, inB || []);
+      }
     }
-    return out;
+    for (r = this.recoveries.length - 1; r >= 0; r--) {
+      var R = this.recoveries[r];
+      if (R.a.dead || R.b.dead) { this._endRecovery(r); continue; }
+      R.t += dt;
+      if (R.t >= CFG.overlapTimeout) {
+        R.a.measure(); R.b.measure();
+        R.a.fixShape(); R.b.fixShape();
+        this._endRecovery(r);
+        continue;
+      }
+      var stillA = false, stillB = false;
+      for (i = 0; i < R.a.n; i++) {
+        if (!R.a.ghostSubas[i]) continue;
+        if (R.b.contains(R.a.x[i], R.a.y[i], 4)) stillA = true; else R.a.ghostSubas[i] = 0;
+      }
+      for (i = 0; i < R.b.n; i++) {
+        if (!R.b.ghostSubas[i]) continue;
+        if (R.a.contains(R.b.x[i], R.b.y[i], 4)) stillB = true; else R.b.ghostSubas[i] = 0;
+      }
+      if (R.contain) {
+        // The smaller one is fully inside: push it out of the container.
+        var ex = R.a.cx - R.b.cx, ey = R.a.cy - R.b.cy, el = Math.hypot(ex, ey);
+        if (el < 1e-6) { ex = 1; ey = 0; el = 1; }
+        R.a.push = [ex / el * CFG.overlapAccel, ey / el * CFG.overlapAccel];
+      }
+      if (!stillA && !stillB) this._endRecovery(r);
+    }
+  };
+  World.prototype._recovering = function (A, B) {
+    for (var r = 0; r < this.recoveries.length; r++) {
+      var R = this.recoveries[r];
+      if ((R.a === A && R.b === B) || (R.a === B && R.b === A)) return true;
+    }
+    return false;
+  };
+  World.prototype._startRecovery = function (A, B, inA, inB) {
+    var R = { a: A, b: B, t: 0, contain: inB.length === 0 && inA.length >= A.n * 0.75 };
+    [[A, B, inA], [B, A, inB]].forEach(function (q) {
+      var s = q[0];
+      if (!s.ghostSubas) s.ghostSubas = new Uint8Array(s.n);
+      s.ghost = s.ghost || {};
+      s.ghost[q[1].id] = true;
+      for (var i = 0; i < q[2].length; i++) s.ghostSubas[q[2][i]] = 1;
+      if (R.contain && s === A) for (var j = 0; j < s.n; j++) s.ghostSubas[j] = 1;
+    });
+    this.recoveries.push(R);
+  };
+  World.prototype._endRecovery = function (r) {
+    var R = this.recoveries[r];
+    this.recoveries.splice(r, 1);
+    [[R.a, R.b], [R.b, R.a]].forEach(function (q) {
+      var s = q[0];
+      if (s.ghost) delete s.ghost[q[1].id];
+      if (s.ghost && Object.keys(s.ghost).length === 0) { s.ghost = null; s.ghostSubas = null; }
+      else if (s.ghostSubas) s.ghostSubas.fill(0);
+    });
+    R.a.push = null;
   };
 
-  function easeOutBack(t) {
-    var c1 = 1.9, c3 = c1 + 1;
-    return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
-  }
+  /* Merge two same-tier sobos touching at subas ia and ib (spec 6). The new
+   * ring follows both old outlines (a peanut), resampled evenly by arc
+   * length, and pressure inflates it to the next tier's size. */
+  World.prototype.merge = function (A, B, ia, ib) {
+    var px = [], py = [], pvx = [], pvy = [];
+    [[A, ia], [B, ib]].forEach(function (q) {
+      var s = q[0], c = q[1], n = s.n;
+      for (var m = c + 1; m < c + n - 1; m++) {
+        var i = m % n;
+        px.push(s.x[i]); py.push(s.y[i]); pvx.push(s.vx[i]); pvy.push(s.vy[i]);
+      }
+    });
+    var N = new Sobo(A.tier + 1, 0, 0), L = px.length, total = 0, seg = new Float64Array(L), k;
+    for (k = 0; k < L; k++) {
+      var k1 = (k + 1) % L;
+      seg[k] = Math.hypot(px[k1] - px[k], py[k1] - py[k]);
+      total += seg[k];
+    }
+    var per = total / N.n, dist = 0, walked = 0, at = 0;
+    for (var i = 0; i < N.n; i++) {
+      while (at < L - 1 && walked + seg[at] <= dist) { walked += seg[at]; at++; }
+      var a1 = (at + 1) % L, t = seg[at] > 0 ? Math.min(1, (dist - walked) / seg[at]) : 0;
+      N.x[i] = px[at] + (px[a1] - px[at]) * t; N.y[i] = py[at] + (py[a1] - py[at]) * t;
+      N.vx[i] = pvx[at] + (pvx[a1] - pvx[at]) * t; N.vy[i] = pvy[at] + (pvy[a1] - pvy[at]) * t;
+      dist += per;
+    }
+    N.bx = (A.bx + B.bx) / 2; N.by = (A.by + B.by) / 2;
+    N.bvx = (A.bvx + B.bvx) / 2; N.bvy = (A.bvy + B.bvy) / 2;
+    N.merged = true;
+    N.flash = 1; N.flashT = 0;
+    N.labelAng = (A.labelAng + B.labelAng) / 2;
+    N.labelVel = Math.random() < 0.5 ? -50 : 50;
+    this.remove(A); this.remove(B);
+    this.add(N);
+    return N;
+  };
+
+  /* Nearest suba hit by a horizontal ray along y from x0 in direction dir
+   * (+1 or -1). A ray starting inside a suba hits it at distance 0. */
+  World.prototype.rayX = function (y0, x0, dir, maxLen, filter) {
+    var best = Infinity, who = null, R2 = SUBA_R * SUBA_R;
+    for (var k = 0; k < this.sobos.length; k++) {
+      var s = this.sobos[k];
+      if (filter && !filter(s)) continue;
+      for (var i = 0; i < s.n; i++) {
+        var dy = s.y[i] - y0;
+        if (dy * dy >= R2) continue;
+        var half = Math.sqrt(R2 - dy * dy);
+        var along = (s.x[i] - x0) * dir;
+        var hit = along - half;
+        if (along + half < 0) continue;
+        if (hit < 0) hit = 0;
+        if (hit < best && hit <= maxLen) { best = hit; who = s; }
+      }
+    }
+    return who ? { dist: best, sobo: who } : null;
+  };
+
+  /* Does a circle of radius r at (x, y) touch any suba? */
+  World.prototype.circleFree = function (x, y, r) {
+    var lim = r + SUBA_R, lim2 = lim * lim;
+    for (var k = 0; k < this.sobos.length; k++) {
+      var s = this.sobos[k];
+      var dx = s.cx - x, dy = s.cy - y, reach = lim + s.data.outerR;
+      if (dx * dx + dy * dy > reach * reach) continue;
+      if (s.contains(x, y)) return false;
+      for (var i = 0; i < s.n; i++) {
+        var ex = s.x[i] - x, ey = s.y[i] - y;
+        if (ex * ex + ey * ey < lim2) return false;
+      }
+    }
+    return true;
+  };
 })(window.SB = window.SB || {});
